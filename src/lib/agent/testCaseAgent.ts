@@ -1,4 +1,8 @@
 import { ChatOpenAI } from '@langchain/openai';
+import { MultiServerMCPClient } from '@langchain/mcp-adapters';
+import { createAgent } from 'langchain';
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import type { ChatMessage, MindMapChatResult, TestCaseAgentResult } from './types';
 
@@ -34,6 +38,20 @@ const chatSchema = z.object({
   assistantReply: z.string(),
   mindMap: mindMapSchema,
 });
+
+type McpServerEntry = {
+  type?: 'http' | 'stdio' | 'sse';
+  transport?: 'http' | 'stdio' | 'sse';
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+};
+
+type McpConfig = {
+  mcpServers?: Record<string, McpServerEntry>;
+};
 
 function splitNumberedLines(text: string) {
   const lines = (text || '')
@@ -134,9 +152,134 @@ function createModel() {
   });
 }
 
-export async function generateTestCases(requirement: string): Promise<TestCaseAgentResult> {
-  const model = createModel();
+function loadMcpServersConfig() {
+  const filePath = path.resolve(process.cwd(), 'mcp.json');
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
 
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as McpConfig;
+    const mcpServers = parsed?.mcpServers || {};
+    const normalized: Record<string, Record<string, unknown>> = {};
+
+    for (const [name, server] of Object.entries(mcpServers)) {
+      const mode = server.transport || server.type;
+      if (mode === 'stdio') {
+        if (!server.command) continue;
+        normalized[name] = {
+          transport: 'stdio',
+          command: server.command,
+          args: server.args || [],
+          env: server.env || {},
+        };
+        continue;
+      }
+
+      if (!server.url) continue;
+      normalized[name] =
+        mode === 'sse'
+          ? {
+              transport: 'sse',
+              url: server.url,
+              headers: server.headers || {},
+            }
+          : {
+              url: server.url,
+              headers: server.headers || {},
+            };
+    }
+
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+function extractTextFromAgentResult(result: unknown) {
+  const data = result as { messages?: Array<{ content?: unknown }> };
+  const messages = data?.messages || [];
+  const last = messages[messages.length - 1];
+  const content = last?.content;
+
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        const block = item as { text?: string };
+        return block.text || '';
+      })
+      .join('\n')
+      .trim();
+  }
+
+  return '';
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/```([\s\S]*?)```/i);
+  const source = (fenced ? fenced[1] : text).trim();
+  const start = source.indexOf('{');
+  const end = source.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return source.slice(start, end + 1);
+  }
+  return source;
+}
+
+async function invokeStructuredWithMcp<T>(params: {
+  schema: z.ZodType<T>;
+  schemaName: string;
+  prompt: string;
+}): Promise<T> {
+  const model = createModel();
+  const direct = model.withStructuredOutput(params.schema, { name: params.schemaName });
+  const mcpServers = loadMcpServersConfig();
+
+  if (Object.keys(mcpServers).length === 0) {
+    return (await direct.invoke(params.prompt)) as T;
+  }
+
+  let client: MultiServerMCPClient | null = null;
+  try {
+    // 按 LangChain 官方 MCP 文档方式：直接传 server map 创建 client
+    client = new MultiServerMCPClient(mcpServers as any);
+
+    const tools = await client.getTools();
+    if (tools.length === 0) {
+      return (await direct.invoke(params.prompt)) as T;
+    }
+
+    const agent = createAgent({
+      model,
+      tools,
+      systemPrompt:
+        '你是测试用例助手。可以按需调用 MCP 工具获取外部信息。最终回复必须只输出一个 JSON 对象，不要包含 markdown、解释或额外文本。',
+    });
+
+    const result = await agent.invoke({
+      messages: [{ role: 'user', content: params.prompt }],
+    });
+
+    const text = extractTextFromAgentResult(result);
+    const jsonText = extractJsonObject(text);
+    const parsed = JSON.parse(jsonText);
+    return params.schema.parse(parsed);
+  } catch {
+    return (await direct.invoke(params.prompt)) as T;
+  } finally {
+    if (client) {
+      await client.close();
+    }
+  }
+}
+
+export async function generateTestCases(requirement: string): Promise<TestCaseAgentResult> {
   const prompt = `你是资深测试架构师。请根据输入需求生成“数量充足、覆盖全面、可执行”的测试用例，并同时返回思维导图树结构。
 
 总体目标：
@@ -186,11 +329,11 @@ export async function generateTestCases(requirement: string): Promise<TestCaseAg
 需求如下：
 ${requirement}`;
 
-  const structured = model.withStructuredOutput(schema, {
-    name: 'test_case_agent_output',
+  const result = await invokeStructuredWithMcp({
+    schema,
+    schemaName: 'test_case_agent_output',
+    prompt,
   });
-
-  const result = await structured.invoke(prompt);
   const normalizedMindMap = buildMindMapFromCases(result.cases);
   return {
     ...result,
@@ -206,11 +349,6 @@ export async function chatAndUpdateMindMap(input: {
   messages: ChatMessage[];
   currentMindMap: MindMapNode;
 }): Promise<MindMapChatResult> {
-  const model = createModel();
-  const structured = model.withStructuredOutput(chatSchema, {
-    name: 'test_case_agent_chat_output',
-  });
-
   const prompt = `你是测试用例脑图助手。你的职责是根据用户连续对话，增删改当前脑图。
 
 规则：
@@ -226,5 +364,9 @@ ${JSON.stringify(input.currentMindMap)}
 历史对话：
 ${serializeMessages(input.messages)}`;
 
-  return structured.invoke(prompt);
+  return invokeStructuredWithMcp({
+    schema: chatSchema,
+    schemaName: 'test_case_agent_chat_output',
+    prompt,
+  });
 }

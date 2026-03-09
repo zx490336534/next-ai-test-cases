@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { chatAndUpdateMindMap } from '@/lib/agent/testCaseAgent';
+import type { ChatMessage, MindMapNode } from '@/lib/agent/types';
 
 const mindMapSchema: z.ZodType<any> = z.lazy(() =>
   z.object({
@@ -32,7 +33,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: '请求参数不合法' }, { status: 400 });
     }
 
-    const data = await chatAndUpdateMindMap(parsed.data);
+    const payload = parsed.data as { messages: ChatMessage[]; currentMindMap: MindMapNode };
+    const data = await chatAndUpdateMindMap(payload);
     return NextResponse.json(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';

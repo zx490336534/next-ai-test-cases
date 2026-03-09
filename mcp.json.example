@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "local-filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/your/workspace"
+      ],
+      "env": {}
+    },
+    "your-http-mcp": {
+      "type": "http",
+      "url": "https://your-mcp-server.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}

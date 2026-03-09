@@ -205,9 +205,13 @@ export async function POST(req: Request) {
     zip.file('content.json', JSON.stringify(content, null, 2));
     zip.file('metadata.json', JSON.stringify({ creator: { name: 'next-ai-test-cases' } }, null, 2));
 
-    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    const binary = await zip.generateAsync({ type: 'uint8array' });
+    const arrayBuffer = binary.buffer.slice(
+      binary.byteOffset,
+      binary.byteOffset + binary.byteLength,
+    ) as ArrayBuffer;
 
-    return new NextResponse(buffer, {
+    return new NextResponse(arrayBuffer, {
       headers: {
         'Content-Type': 'application/vnd.xmind.workbook',
         'Content-Disposition': `attachment; filename="${encodeURIComponent(sheetTitle)}.xmind"`,

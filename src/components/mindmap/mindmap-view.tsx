@@ -22,8 +22,8 @@ export function MindMapView({ data }: Props) {
 
       try {
         setRenderError(null);
-        const module = await import('simple-mind-map');
-        const MindMap = module.default ?? (module as { MindMap?: any }).MindMap;
+        const smm = await import('simple-mind-map');
+        const MindMap = smm.default ?? (smm as { MindMap?: any }).MindMap;
 
         if (!MindMap) {
           throw new Error('simple-mind-map 加载失败');
@@ -40,13 +40,14 @@ export function MindMapView({ data }: Props) {
         }
         containerRef.current.innerHTML = '';
 
-        instanceRef.current = new MindMap({
+        const MindMapCtor = MindMap as new (opts: any) => any;
+        instanceRef.current = new MindMapCtor({
           el: containerRef.current,
           data,
           theme: 'default',
           layout: 'logicalStructure',
           fit: true,
-        });
+        } as any);
 
         requestAnimationFrame(() => {
           instanceRef.current?.view?.fit?.();
