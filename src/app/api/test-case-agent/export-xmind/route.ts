@@ -63,6 +63,19 @@ function sanitizeLabel(text: string) {
   return (text || '').trim();
 }
 
+function splitNumberedLines(text: string) {
+  return (text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+function buildExpectedLine(stepIndex: number, expectedLines: string[]) {
+  if (expectedLines[stepIndex]) return expectedLines[stepIndex];
+  if (expectedLines.length > 0) return expectedLines[0];
+  return `期望结果 ${stepIndex + 1}`;
+}
+
 function buildRootFromCases(testCases: TestCaseItem[]) {
   const grouped = new Map<string, Map<string, TestCaseItem[]>>();
 
@@ -87,30 +100,39 @@ function buildRootFromCases(testCases: TestCaseItem[]) {
         id: uid(),
         title: `!${precondition}`,
         children: {
-          attached: items.map((it) => ({
-            id: sanitizeLabel(it.id) || uid(),
-            title: `[${it.priority}] ${sanitizeLabel(it.topic) || '未命名测试'}`,
-            priority: it.priority,
-            precondition: it.precondition,
-            steps: it.steps,
-            expected: it.expected,
-            children: {
-              attached: [
-                {
-                  id: uid(),
-                  title: `测试步骤\n${it.steps || '未提供'}`,
-                  children: {
-                    attached: [
-                      {
-                        id: uid(),
-                        title: `期望结果\n${it.expected || '未提供'}`,
-                      },
-                    ],
+          attached: items.map((it) => {
+            const stepLines = splitNumberedLines(it.steps);
+            const expectedLines = splitNumberedLines(it.expected);
+            const safeSteps = stepLines.length > 0 ? stepLines : ['1. 未提供测试步骤'];
+
+            return {
+              id: sanitizeLabel(it.id) || uid(),
+              title: `[${it.priority}] ${sanitizeLabel(it.topic) || '未命名测试'}`,
+              priority: it.priority,
+              precondition: it.precondition,
+              steps: it.steps,
+              expected: it.expected,
+              children: {
+                attached: [
+                  {
+                    id: uid(),
+                    title: `测试步骤\n${safeSteps.join('\n')}`,
+                    children: {
+                      attached: [
+                        {
+                          id: uid(),
+                          title: `期望结果\n${(expectedLines.length > 0
+                            ? expectedLines
+                            : safeSteps.map((_, idx) => buildExpectedLine(idx, expectedLines)
+                          )).join('\n')}`,
+                        },
+                      ],
+                    },
                   },
-                },
-              ],
-            },
-          })),
+                ],
+              },
+            };
+          }),
         },
       })),
     },

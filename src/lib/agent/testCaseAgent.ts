@@ -35,6 +35,22 @@ const chatSchema = z.object({
   mindMap: mindMapSchema,
 });
 
+function splitNumberedLines(text: string) {
+  const lines = (text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return [];
+  return lines;
+}
+
+function buildExpectedLine(stepIndex: number, expectedLines: string[]) {
+  if (expectedLines[stepIndex]) return expectedLines[stepIndex];
+  if (expectedLines.length > 0) return expectedLines[0];
+  return `期望结果 ${stepIndex + 1}`;
+}
+
 function buildMindMapFromCases(
   cases: Array<{
     category: string;
@@ -80,17 +96,25 @@ function buildMindMapFromCases(
         data: { text: `!${precondition.replace(/^!/, '')}` },
         children: items.map((it) => ({
           data: { text: `[${it.priority}] ${it.topic}` },
-          children: [
-            {
-              data: { text: `测试步骤\n${it.steps || '未提供'}` },
-              children: [
-                {
-                  data: { text: `期望结果\n${it.expected || '未提供'}` },
-                  children: [],
-                },
-              ],
-            },
-          ],
+          children: (() => {
+            const stepLines = splitNumberedLines(it.steps);
+            const expectedLines = splitNumberedLines(it.expected);
+            const safeSteps = stepLines.length > 0 ? stepLines : ['1. 未提供测试步骤'];
+            const safeExpected =
+              expectedLines.length > 0 ? expectedLines : safeSteps.map((_, idx) => buildExpectedLine(idx, expectedLines));
+
+            return [
+              {
+                data: { text: `测试步骤\n${safeSteps.join('\n')}` },
+                children: [
+                  {
+                    data: { text: `期望结果\n${safeExpected.join('\n')}` },
+                    children: [],
+                  },
+                ],
+              },
+            ];
+          })(),
         })),
       })),
     })),
@@ -142,14 +166,19 @@ export async function generateTestCases(requirement: string): Promise<TestCaseAg
    1. 打开页面
    2. 输入数据
    3. 点击提交
-5. summary 用 2-4 句话概括覆盖范围、总条数和主要风险点。
+5. expected 使用单个字符串，并与 steps 同编号逐条对应（每个步骤必须有一条期望结果），示例：
+   1. 页面打开成功并展示登录表单
+   2. 输入值被正确接收并通过前端校验
+   3. 提交成功并返回正确反馈
+6. steps 和 expected 不能为空，不允许输出空字符串。
+7. summary 用 2-4 句话概括覆盖范围、总条数和主要风险点。
 6. mindMap 需与用例结构一致：
    - 根节点固定为 @测试用例
    - 第二层为 @类别节点（如 @功能测试）
    - 第三层为 !前置条件节点（如 !已登录用户）
    - 第四层为测试用例节点（建议带优先级前缀，如 [P0] 正常登录测试）
-7. 每个节点必须包含 children 字段；叶子节点使用空数组 []，不要省略。
-8. 输出必须是结构化 JSON，不要包含 markdown。
+8. 每个节点必须包含 children 字段；叶子节点使用空数组 []，不要省略。
+9. 输出必须是结构化 JSON，不要包含 markdown。
 
 信息不足处理：
 - 若需求细节缺失，请做“最小必要合理假设”后继续生成，不要因为信息不全而减少覆盖面。可在 summary 中注明关键假设。 

@@ -75,6 +75,48 @@ export default function Page() {
     return text.replace(/^\s*\[?P[0-3]\]?\s*[-:：]?\s*/i, '').trim();
   }
 
+  function extractLabeledContent(text: string, label: '测试步骤' | '期望结果') {
+    const normalized = (text || '').replace(/\r/g, '');
+    const lines = normalized.split('\n');
+    if (lines.length === 0) return '';
+
+    const firstLine = lines[0].trim();
+    const regex = new RegExp(`^${label}(\\s*\\d+)?\\s*[:：-]?\\s*(.*)$`);
+    const match = firstLine.match(regex);
+    if (!match) return normalized.trim();
+
+    const inline = (match[2] || '').trim();
+    const rest = lines.slice(1).join('\n').trim();
+    if (inline && rest) return `${inline}\n${rest}`;
+    return inline || rest;
+  }
+
+  function parseStepAndExpected(testNode: MindMapNode) {
+    const stepsList: string[] = [];
+    const expectedList: string[] = [];
+
+    for (const child of testNode.children) {
+      const childText = child.data.text || '';
+
+      if (childText.includes('测试步骤')) {
+        stepsList.push(extractLabeledContent(childText, '测试步骤'));
+        const nestedExpected = child.children.find((c) => c.data.text.includes('期望结果'));
+        if (nestedExpected) {
+          expectedList.push(extractLabeledContent(nestedExpected.data.text, '期望结果'));
+        }
+      }
+
+      if (childText.includes('期望结果') && expectedList.length === 0) {
+        expectedList.push(extractLabeledContent(childText, '期望结果'));
+      }
+    }
+
+    return {
+      steps: stepsList.join('\n'),
+      expected: expectedList.join('\n'),
+    };
+  }
+
   function extractCasesFromMindMap(root: MindMapNode) {
     const rows: Array<{ testName: string; priority: string; precondition: string; steps: string; expected: string }> = [];
     const level1 = root.data.text.startsWith('@') ? root.children : [root];
@@ -84,12 +126,13 @@ export default function Page() {
       for (const preconditionNode of categoryNode.children) {
         const precondition = preconditionNode.data.text.replace(/^!/, '').trim() || '无';
         for (const testNode of preconditionNode.children) {
+          const detail = parseStepAndExpected(testNode);
           rows.push({
             testName: `${category}-${cleanName(testNode.data.text)}`,
             priority: extractPriority(testNode.data.text),
             precondition,
-            steps: '',
-            expected: '',
+            steps: detail.steps,
+            expected: detail.expected,
           });
         }
       }
@@ -101,16 +144,7 @@ export default function Page() {
   function exportCsv() {
     const escapeCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const header = ['测试名称', '优先级', '前置条件', '测试步骤', '期望结果'];
-    const rows =
-      testCases.length > 0
-        ? testCases.map((c) => ({
-            testName: `${c.category}-${c.topic}`,
-            priority: c.priority,
-            precondition: c.precondition,
-            steps: c.steps,
-            expected: c.expected,
-          }))
-        : extractCasesFromMindMap(mindMap);
+    const rows = extractCasesFromMindMap(mindMap);
     const body = rows.map((r) =>
       [r.testName, r.priority, r.precondition, r.steps, r.expected].map((v) => escapeCell(v || '')).join(','),
     );
