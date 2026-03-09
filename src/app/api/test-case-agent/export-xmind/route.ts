@@ -44,11 +44,40 @@ function uid() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
+function parsePriorityFromText(text: string): { cleanTitle: string; priority?: 'P0' | 'P1' | 'P2' | 'P3' } {
+  const raw = (text || '').trim();
+  const match = raw.match(/^\[?\s*(P[0-3])\s*\]?\s*[-:：]?\s*(.*)$/i);
+  if (!match) {
+    return { cleanTitle: raw };
+  }
+  const priority = match[1].toUpperCase() as 'P0' | 'P1' | 'P2' | 'P3';
+  const cleanTitle = (match[2] || '').trim() || raw;
+  return { cleanTitle, priority };
+}
+
+function toPriorityMarker(priority: 'P0' | 'P1' | 'P2' | 'P3') {
+  // XMind 任务优先级图标：1~4
+  const markerId = {
+    P0: 'priority-1',
+    P1: 'priority-2',
+    P2: 'priority-3',
+    P3: 'priority-4',
+  }[priority];
+  return markerId;
+}
+
 function toXmindTopic(node: MindMapNode): Record<string, unknown> {
+  const parsed = parsePriorityFromText(node.data.text || '未命名节点');
   const topic: Record<string, unknown> = {
     id: uid(),
-    title: node.data.text || '未命名节点',
+    title: parsed.cleanTitle || '未命名节点',
   };
+
+  if (parsed.priority) {
+    const markerId = toPriorityMarker(parsed.priority);
+    topic.markers = [{ markerId }];
+    topic.markerRefs = [markerId];
+  }
 
   if (node.children.length > 0) {
     topic.children = {
@@ -107,11 +136,13 @@ function buildRootFromCases(testCases: TestCaseItem[]) {
 
             return {
               id: sanitizeLabel(it.id) || uid(),
-              title: `[${it.priority}] ${sanitizeLabel(it.topic) || '未命名测试'}`,
+              title: sanitizeLabel(it.topic) || '未命名测试',
               priority: it.priority,
               precondition: it.precondition,
               steps: it.steps,
               expected: it.expected,
+              markers: [{ markerId: toPriorityMarker(it.priority) }],
+              markerRefs: [toPriorityMarker(it.priority)],
               children: {
                 attached: [
                   {

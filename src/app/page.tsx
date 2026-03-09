@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Download, FileArchive, Loader2, Send, Upload } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Download, FileArchive, Loader2, Send } from 'lucide-react';
 import { MindMapView } from '@/components/mindmap/mindmap-view';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,13 +51,11 @@ function normalizeMindMap(input: unknown): MindMapNode {
 }
 
 export default function Page() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [mindMap, setMindMap] = useState<MindMapNode>(EMPTY_MAP);
   const [testCases, setTestCases] = useState<TestCaseItem[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
-  const [loadingImport, setLoadingImport] = useState(false);
   const [loadingExportXmind, setLoadingExportXmind] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -192,34 +190,6 @@ export default function Page() {
     }
   }
 
-  async function onImportXmind(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLoadingImport(true);
-    setError(null);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/test-case-agent/import-xmind', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || '导入失败');
-      }
-      setMindMap(normalizeMindMap(data.mindMap));
-      setTestCases([]);
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.summary || `已导入 ${file.name}` }]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导入失败');
-    } finally {
-      setLoadingImport(false);
-      e.target.value = '';
-    }
-  }
-
   function insertTemplate(content: string) {
     setInput((prev) => (prev.trim() ? `${prev}\n${content}` : content));
   }
@@ -314,11 +284,6 @@ export default function Page() {
                   )}
                   导出 XMind
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={loadingImport}>
-                  {loadingImport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                  导入 XMind
-                </Button>
-                <input ref={fileInputRef} type="file" accept=".xmind" className="hidden" onChange={onImportXmind} />
               </div>
             </div>
           </CardHeader>

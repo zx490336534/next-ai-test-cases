@@ -10,7 +10,6 @@
   - 首次发送：根据输入需求生成脑图
   - 后续发送：通过对话增删改脑图
 - 输入区支持模板 tag（登录/注册/搜索/支付）快速插入需求
-- 支持导入 `.xmind`（读取 `content.json`）并加载到脑图
 - 支持导出 `.xmind`（可在 XMind 中继续编辑）
 - 支持导出 CSV（测试用例标准列）
 
@@ -20,9 +19,21 @@
 
 ![生成脑图](doc/img/生成.png)
 
+### 部分用例展示
+
+![部分用例展示](doc/img/部分用例展示.png)
+
 ### 对话修改脑图
 
 ![对话修改脑图](doc/img/修改.png)
+
+### 导出 CSV
+
+![导出 CSV](doc/img/导出csv.png)
+
+### 导出 XMind
+
+![导出 XMind](doc/img/导出xmind.png)
 
 ## 技术栈
 
@@ -64,7 +75,6 @@ CSV 使用 UTF-8 BOM，列固定为：
 - `src/app/page.tsx`: 主界面（左脑图 + 右对话）
 - `src/app/api/test-case-agent/route.ts`: 首次生成 API
 - `src/app/api/test-case-agent/chat/route.ts`: 连续对话更新脑图 API
-- `src/app/api/test-case-agent/import-xmind/route.ts`: 导入 XMind API
 - `src/app/api/test-case-agent/export-xmind/route.ts`: 导出 XMind API
 - `src/lib/agent/testCaseAgent.ts`: LangChain 生成逻辑
 - `src/components/mindmap/mindmap-view.tsx`: simple-mind-map 渲染
