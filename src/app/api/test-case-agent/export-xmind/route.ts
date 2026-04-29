@@ -3,7 +3,13 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 type MindMapNode = {
-  data: { text: string };
+  data: {
+    text: string;
+    uid?: string;
+    id?: string;
+    tag?: string[];
+    priority?: 'P0' | 'P1' | 'P2' | 'P3';
+  };
   children: MindMapNode[];
 };
 
@@ -17,9 +23,17 @@ type TestCaseItem = {
   expected: string;
 };
 
+const mindMapNodeDataSchema = z.object({
+  text: z.string(),
+  uid: z.string().optional(),
+  id: z.string().optional(),
+  tag: z.array(z.string()).optional(),
+  priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
+}).passthrough();
+
 const mindMapSchema: z.ZodType<MindMapNode> = z.lazy(() =>
   z.object({
-    data: z.object({ text: z.string() }),
+    data: mindMapNodeDataSchema,
     children: z.array(mindMapSchema),
   }),
 );
@@ -48,11 +62,15 @@ function parsePriorityFromText(text: string): { cleanTitle: string; priority?: '
   const raw = (text || '').trim();
   const match = raw.match(/^\[?\s*(P[0-3])\s*\]?\s*[-:：]?\s*(.*)$/i);
   if (!match) {
-    return { cleanTitle: raw };
+    return { cleanTitle: stripPreconditionPrefix(raw) };
   }
   const priority = match[1].toUpperCase() as 'P0' | 'P1' | 'P2' | 'P3';
-  const cleanTitle = (match[2] || '').trim() || raw;
+  const cleanTitle = stripPreconditionPrefix((match[2] || '').trim()) || raw;
   return { cleanTitle, priority };
+}
+
+function stripPreconditionPrefix(text: string) {
+  return text.replace(/^\s*!\s*/, '').trim();
 }
 
 function toPriorityMarker(priority: 'P0' | 'P1' | 'P2' | 'P3') {
@@ -68,13 +86,14 @@ function toPriorityMarker(priority: 'P0' | 'P1' | 'P2' | 'P3') {
 
 function toXmindTopic(node: MindMapNode): Record<string, unknown> {
   const parsed = parsePriorityFromText(node.data.text || '未命名节点');
+  const priority = node.data.priority || parsed.priority;
   const topic: Record<string, unknown> = {
     id: uid(),
     title: parsed.cleanTitle || '未命名节点',
   };
 
-  if (parsed.priority) {
-    const markerId = toPriorityMarker(parsed.priority);
+  if (priority) {
+    const markerId = toPriorityMarker(priority);
     topic.markers = [{ markerId }];
     topic.markerRefs = [markerId];
   }
@@ -127,7 +146,7 @@ function buildRootFromCases(testCases: TestCaseItem[]) {
     children: {
       attached: Array.from(preMap.entries()).map(([precondition, items]) => ({
         id: uid(),
-        title: `!${precondition}`,
+        title: stripPreconditionPrefix(precondition) || '默认前置条件',
         children: {
           attached: items.map((it) => {
             const stepLines = splitNumberedLines(it.steps);

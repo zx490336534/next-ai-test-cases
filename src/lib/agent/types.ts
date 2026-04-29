@@ -8,13 +8,41 @@ export type TestCaseItem = {
   priority: 'P0' | 'P1' | 'P2' | 'P3';
 };
 
+export type TestCaseModulePlan = {
+  id: string;
+  title: string;
+  description: string;
+  riskPoints: string[];
+};
+
+export type MindMapNodeData = {
+  text: string;
+  uid?: string;
+  id?: string;
+  tag?: string[];
+  priority?: 'P0' | 'P1' | 'P2' | 'P3';
+};
+
 export type MindMapNode = {
-  data: { text: string };
+  data: MindMapNodeData;
   children: MindMapNode[];
 };
 
 export type TestCaseAgentResult = {
   summary: string;
+  cases: TestCaseItem[];
+  mindMap: MindMapNode;
+};
+
+export type TestCasePlanResult = {
+  summary: string;
+  modules: TestCaseModulePlan[];
+  mindMap: MindMapNode;
+};
+
+export type ModuleTestCaseResult = {
+  summary: string;
+  module: TestCaseModulePlan;
   cases: TestCaseItem[];
   mindMap: MindMapNode;
 };

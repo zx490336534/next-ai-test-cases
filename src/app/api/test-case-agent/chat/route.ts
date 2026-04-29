@@ -3,9 +3,17 @@ import { z } from 'zod';
 import { chatAndUpdateMindMap } from '@/lib/agent/testCaseAgent';
 import type { ChatMessage, MindMapNode } from '@/lib/agent/types';
 
-const mindMapSchema: z.ZodType<any> = z.lazy(() =>
+const mindMapNodeDataSchema = z.object({
+  text: z.string(),
+  uid: z.string().optional(),
+  id: z.string().optional(),
+  tag: z.array(z.string()).optional(),
+  priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
+}).passthrough();
+
+const mindMapSchema: z.ZodType<MindMapNode> = z.lazy(() =>
   z.object({
-    data: z.object({ text: z.string() }),
+    data: mindMapNodeDataSchema,
     children: z.array(mindMapSchema),
   }),
 );

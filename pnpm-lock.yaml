@@ -48,8 +48,8 @@ importers:
         specifier: 19.1.0
         version: 19.1.0(react@19.1.0)
       simple-mind-map:
-        specifier: ^0.13.1
-        version: 0.13.1
+        specifier: 0.14.0-fix.2
+        version: 0.14.0-fix.2
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.5.0
@@ -2331,8 +2331,8 @@ packages:
     resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
     engines: {node: '>= 0.4'}
 
-  simple-mind-map@0.13.1:
-    resolution: {integrity: sha512-IQpUzY0y/JZhVygU0aO21RRcBDKgyzVHmolEV4uMWuXuJR3r1uLAP4JP4Bur7I5QM7gz30OZjrLaT15f45R1Mg==}
+  simple-mind-map@0.14.0-fix.2:
+    resolution: {integrity: sha512-31EWUozONl7Nn8b2Idf6UdPcAGtS8prVBjz/j0TZ9/zJcvmcEaJd1utX4sI/DGrr0ZW51ZNrfk09dYYCMaG7AA==}
 
   simple-peer@9.11.1:
     resolution: {integrity: sha512-D1SaWpOW8afq1CZGWB8xTfrT3FekjQmPValrqncJMX7QFl8YwhrPTZvMCANLtgBwwdS+7zURyqxDDEmY558tTw==}
@@ -5160,7 +5160,7 @@ snapshots:
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
 
-  simple-mind-map@0.13.1:
+  simple-mind-map@0.14.0-fix.2:
     dependencies:
       '@svgdotjs/svg.js': 3.2.0
       deepmerge: 1.5.2
