@@ -1,6 +1,21 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss" source(none);
+@source "./**/*.tsx";
+@source "../components/**/*.tsx";
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-border: hsl(var(--border));
+  --color-ring: hsl(var(--primary));
+  --color-destructive: #b6403c;
+  --color-input: hsl(var(--input));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+}
 
 :root {
   --background: 0 0% 100%;
@@ -9,7 +24,7 @@
   --card-foreground: 222.2 84% 4.9%;
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
-  --primary: 221.2 83.2% 53.3%;
+  --primary: 173 68% 26%;
   --primary-foreground: 210 40% 98%;
   --muted: 210 40% 96.1%;
   --muted-foreground: 215.4 16.3% 46.9%;
@@ -21,4 +36,25 @@
 
 body {
   @apply bg-background text-foreground overflow-x-hidden;
+  font-family: ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.mindmap-grid {
+  background-image: radial-gradient(circle, #d2e5e1 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.workspace-body {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.workspace-body[data-chat-open="true"] {
+  grid-template-rows: minmax(135px, 0.85fr) minmax(0, 1.15fr);
+}
+
+@media (min-width: 900px) {
+  .workspace-body[data-chat-open="true"] {
+    grid-template-columns: minmax(0, 1fr) clamp(310px, 28vw, 420px);
+    grid-template-rows: minmax(0, 1fr);
+  }
 }

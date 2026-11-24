@@ -1,37 +1,23 @@
-import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { moduleSchema, requirementSchema } from '@/lib/agent/contracts';
+import { collectMaterials } from '@/lib/agent/materials';
+import { createModel } from '@/lib/agent/model';
+import { errorResponse, modelRequestSchema, parseRequest, resolveModelSettings } from '@/lib/agent/modelConfig';
 import { generateModuleTestCases } from '@/lib/agent/testCaseAgent';
 
-const moduleSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string(),
-  riskPoints: z.array(z.string()),
-});
-
-const reqSchema = z.object({
-  requirement: z.string().min(1),
+const requestSchema = modelRequestSchema.extend({
+  requirement: requirementSchema,
   module: moduleSchema,
-  modules: z.array(moduleSchema),
+  modules: z.array(moduleSchema).max(8),
 });
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const raw = await req.json();
-    const parsed = reqSchema.safeParse(raw);
-
-    if (!parsed.success) {
-      return NextResponse.json({ error: '请求参数不合法' }, { status: 400 });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: '请先配置 OPENAI_API_KEY' }, { status: 500 });
-    }
-
-    const data = await generateModuleTestCases(parsed.data);
-    return NextResponse.json(data);
+    const input = await parseRequest(request, requestSchema);
+    const model = createModel(resolveModelSettings(input.settings), request.signal);
+    const materials = await collectMaterials(input.requirement, request.signal);
+    return Response.json(await generateModuleTestCases(model, materials, input.module, input.modules));
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error);
   }
 }

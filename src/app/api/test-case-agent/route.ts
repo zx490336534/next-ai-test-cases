@@ -1,23 +1,16 @@
-import { NextResponse } from 'next/server';
+import { requirementSchema } from '@/lib/agent/contracts';
+import { collectMaterials } from '@/lib/agent/materials';
+import { createModel } from '@/lib/agent/model';
+import { errorResponse, modelRequestSchema, parseRequest, resolveModelSettings } from '@/lib/agent/modelConfig';
 import { generateTestCases } from '@/lib/agent/testCaseAgent';
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const body = await req.json();
-    const requirement = (body?.requirement || '').trim();
-
-    if (!requirement) {
-      return NextResponse.json({ error: 'requirement 不能为空' }, { status: 400 });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: '请先配置 OPENAI_API_KEY' }, { status: 500 });
-    }
-
-    const data = await generateTestCases(requirement);
-    return NextResponse.json(data);
+    const input = await parseRequest(request, modelRequestSchema.extend({ requirement: requirementSchema }));
+    const model = createModel(resolveModelSettings(input.settings), request.signal);
+    const materials = await collectMaterials(input.requirement, request.signal);
+    return Response.json(await generateTestCases(model, materials));
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error);
   }
 }

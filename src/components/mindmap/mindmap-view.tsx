@@ -1,11 +1,15 @@
 'use client';
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, CornerDownRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { EMPTY_MAP, normalizeMindMap } from '@/lib/agent/mindMap';
 import type { MindMapNode } from '@/lib/agent/types';
 
 type Props = {
   data: MindMapNode | null;
   onChange?: (data: MindMapNode) => void;
+  readOnly?: boolean;
+  onSelectionChange?: (id: string | null) => void;
   onScaleChange?: (scalePercent: number) => void;
 };
 
@@ -19,6 +23,9 @@ export type MindMapViewHandle = {
   undo: () => void;
   redo: () => void;
   refresh: () => void;
+  locate: (id: string) => void;
+  read: () => MindMapNode | undefined;
+  isEditing: () => boolean;
 };
 
 const TAG_COLORS = {
@@ -30,13 +37,6 @@ const TAG_COLORS = {
 };
 
 type Priority = 'P0' | 'P1' | 'P2' | 'P3';
-
-const PRECONDITION_TAG = '前置';
-
-const EMPTY_MAP: MindMapNode = {
-  data: { text: '@测试用例', uid: 'root', id: 'root' },
-  children: [],
-};
 
 type RawMindMapData = {
   text?: unknown;
@@ -57,6 +57,7 @@ type RawMindMapNode = {
 type MindMapEventHandlers = {
   handleDataChange: () => void;
   handleScale: (scale: number) => void;
+  handleSelection: (node: MindMapNodeLike | null, nodes: MindMapNodeLike[]) => void;
   handleNodeTreeRenderEnd: () => void;
   handleNodeTagClick: (node: MindMapNodeLike, item: MindMapTagItem) => void;
 };
@@ -64,6 +65,7 @@ type MindMapEventHandlers = {
 type MindMapTagItem = string | { text?: string; value?: string; name?: string };
 
 type MindMapNodeLike = {
+  isRoot?: boolean;
   nodeData?: {
     data?: RawMindMapData;
   };
@@ -75,6 +77,14 @@ type MindMapNodeLike = {
 };
 
 type MindMapInstance = {
+  keyCommand?: { removeShortcut: (key: string) => void; addShortcut: (key: string, action: () => void) => void };
+  renderer?: {
+    activeNodeList: MindMapNodeLike[];
+    textEdit?: {
+      show: (input: { node: MindMapNodeLike }) => Promise<void>;
+      isShowTextEdit: () => boolean;
+    };
+  };
   view?: {
     scale?: number;
     setScale?: (scale: number) => void;
@@ -82,16 +92,19 @@ type MindMapInstance = {
     reset?: () => void;
   };
   resize?: () => void;
-  setData?: (data: MindMapNode) => void;
+  updateData?: (data: MindMapNode) => void;
+  setMode?: (mode: 'readonly' | 'edit') => void;
   getData?: (withConfig?: boolean) => unknown;
   execCommand?: (command: string, ...args: unknown[]) => void;
   on?: {
     (eventName: 'scale', handler: (scale: number) => void): void;
+    (eventName: 'node_active', handler: MindMapEventHandlers['handleSelection']): void;
     (eventName: 'node_tag_click', handler: (node: MindMapNodeLike, item: MindMapTagItem) => void): void;
     (eventName: string, handler: (...args: unknown[]) => void): void;
   };
   off?: {
     (eventName: 'scale', handler: (scale: number) => void): void;
+    (eventName: 'node_active', handler: MindMapEventHandlers['handleSelection']): void;
     (eventName: 'node_tag_click', handler: (node: MindMapNodeLike, item: MindMapTagItem) => void): void;
     (eventName: string, handler?: (...args: unknown[]) => void): void;
   };
@@ -130,59 +143,14 @@ function normalizePriority(value: unknown): Priority | null {
   return priority === 'P0' || priority === 'P1' || priority === 'P2' || priority === 'P3' ? priority : null;
 }
 
-function extractPriority(text: string) {
-  const match = text.match(/^\s*\[?\s*(P[0-3])\s*\]?\s*[-:：]?/i);
-  return match ? (match[1].toUpperCase() as Priority) : null;
-}
-
-function stripPriorityPrefix(text: string) {
-  return text.replace(/^\s*\[?\s*P[0-3]\s*\]?\s*[-:：]?\s*/i, '').trim();
-}
-
-function stripPreconditionPrefix(text: string) {
-  return text.replace(/^\s*!\s*/, '').trim();
-}
-
-function normalizeTags(tag: unknown) {
-  return Array.isArray(tag) ? tag.map(String).filter(Boolean) : [];
-}
-
-function firstPriorityFromTags(tags: string[]) {
-  return tags.map((tag) => normalizePriority(tag)).find(Boolean) || null;
-}
-
 function tagText(item: MindMapTagItem) {
   return typeof item === 'string' ? item : item?.text || item?.value || item?.name || String(item);
 }
 
-function normalizeNodeForMindMap(node: MindMapNode | null | undefined, path: number[] = []): MindMapNode {
-  const source = node || EMPTY_MAP;
-  const rawText = typeof source.data?.text === 'string' && source.data.text.trim() ? source.data.text : '未命名节点';
-  const sourceTags = normalizeTags(source.data?.tag);
-  const priority = normalizePriority(source.data?.priority) || firstPriorityFromTags(sourceTags) || extractPriority(rawText);
-  const uid = source.data?.uid || source.data?.id || (path.length === 0 ? 'root' : `node-${path.join('-')}`);
-  const hasPreconditionPrefix = rawText.trim().startsWith('!');
-  const hasPreconditionTag = sourceTags.includes(PRECONDITION_TAG) || hasPreconditionPrefix;
-  const existingTags = sourceTags.filter((tag) => !normalizePriority(tag) && tag !== PRECONDITION_TAG);
-  const displayText = stripPreconditionPrefix(priority ? stripPriorityPrefix(rawText) || rawText : rawText) || rawText;
-  const nextTags = [
-    ...(priority ? [priority] : []),
-    ...(hasPreconditionTag ? [PRECONDITION_TAG] : []),
-    ...existingTags,
-  ];
-
+function nodeForEditor(node: MindMapNode): MindMapNode {
   return {
-    data: {
-      ...source.data,
-      text: escapeHtml(displayText),
-      uid,
-      id: source.data?.id || uid,
-      ...(priority ? { priority } : {}),
-      ...(nextTags.length > 0 ? { tag: nextTags } : {}),
-    },
-    children: Array.isArray(source.children)
-      ? source.children.map((child, index) => normalizeNodeForMindMap(child, [...path, index]))
-      : [],
+    data: { ...node.data, text: escapeHtml(node.data.text) },
+    children: node.children.map(nodeForEditor),
   };
 }
 
@@ -202,45 +170,21 @@ function normalizeNodeFromMindMap(node: unknown): MindMapNode {
     : Array.isArray(data.children)
       ? data.children
       : [];
-  const rawText = unescapeHtml(String(data.text || data.topic || '未命名节点'));
-  const tags = normalizeTags(data.tag);
-  const priority = normalizePriority(data.priority) || firstPriorityFromTags(tags) || extractPriority(rawText);
-  const hasPreconditionTag = tags.includes(PRECONDITION_TAG) || rawText.trim().startsWith('!');
-  const businessTags = tags.filter((tag) => tag !== PRECONDITION_TAG);
-  const nextTags = hasPreconditionTag ? [PRECONDITION_TAG, ...businessTags] : businessTags;
-
   return {
     data: {
-      text: stripPreconditionPrefix(priority ? stripPriorityPrefix(rawText) || rawText : rawText) || rawText,
-      ...(typeof data.uid === 'string' ? { uid: data.uid } : {}),
-      ...(typeof data.id === 'string' ? { id: data.id } : typeof data.uid === 'string' ? { id: data.uid } : {}),
-      ...(priority ? { priority } : {}),
-      ...(nextTags.length > 0 ? { tag: nextTags } : {}),
+      text: unescapeHtml(String(data.text || data.topic || '')),
+      ...(typeof data.uid === 'string' && { uid: data.uid }),
+      ...(typeof data.id === 'string' && { id: data.id }),
+      ...(normalizePriority(data.priority) && { priority: normalizePriority(data.priority)! }),
+      ...(Array.isArray(data.tag) && { tag: data.tag.map(tagText) }),
     },
-    children: children.map((child) => normalizeNodeFromMindMap(child)),
+    children: children.map(normalizeNodeFromMindMap),
   };
 }
 
-function updatePriorityInTree(node: MindMapNode, nodeUid: string, priority: Priority): MindMapNode {
-  const uid = node.data.uid || node.data.id;
-  const tags = normalizeTags(node.data.tag).filter((tag) => !normalizePriority(tag));
-  const nextNode =
-    uid === nodeUid
-      ? {
-          ...node,
-          data: {
-            ...node.data,
-            text: stripPreconditionPrefix(stripPriorityPrefix(node.data.text || '')) || node.data.text,
-            priority,
-            tag: [priority, ...tags],
-          },
-        }
-      : node;
-
-  return {
-    ...nextNode,
-    children: nextNode.children.map((child) => updatePriorityInTree(child, nodeUid, priority)),
-  };
+function changeNodePriority(node: MindMapNode, uid: string, priority: Priority): MindMapNode {
+  if (node.data.uid === uid) return { ...node, data: { ...node.data, priority } };
+  return { ...node, children: node.children.map((child) => changeNodePriority(child, uid, priority)) };
 }
 
 function extractRootData(rawData: unknown) {
@@ -250,7 +194,7 @@ function extractRootData(rawData: unknown) {
 }
 
 export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMapView(
-  { data, onChange, onScaleChange },
+  { data, onChange, onScaleChange, onSelectionChange, readOnly = false },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -258,24 +202,38 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
   const currentDataRef = useRef<MindMapNode>(data || EMPTY_MAP);
   const onChangeRef = useRef(onChange);
   const onScaleChangeRef = useRef(onScaleChange);
-  const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const selectionRef = useRef<MindMapNodeLike[]>([]);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitTimerRefs = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastSyncedJsonRef = useRef('');
+  const showingCasesRef = useRef(false);
   const mountedRef = useRef(false);
   const programmaticUpdateRef = useRef(false);
   const fitPendingAfterRenderRef = useRef(false);
+  const [selection, setSelection] = useState<{ root: boolean; count: number } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [priorityEditor, setPriorityEditor] = useState<PriorityEditorState | null>(null);
 
-  onChangeRef.current = onChange;
-  onScaleChangeRef.current = onScaleChange;
-  currentDataRef.current = data || EMPTY_MAP;
-
-  const normalizedData = useMemo(() => normalizeNodeForMindMap(data || EMPTY_MAP), [data]);
+  const normalizedData = useMemo(() => nodeForEditor(data || EMPTY_MAP), [data]);
   const normalizedDataRef = useRef(normalizedData);
-  normalizedDataRef.current = normalizedData;
+  const readOnlyRef = useRef(readOnly);
+  useLayoutEffect(() => {
+    onChangeRef.current = onChange;
+    onScaleChangeRef.current = onScaleChange;
+    onSelectionChangeRef.current = onSelectionChange;
+    currentDataRef.current = data || EMPTY_MAP;
+    normalizedDataRef.current = normalizedData;
+    readOnlyRef.current = readOnly;
+    instanceRef.current?.setMode?.(readOnly ? 'readonly' : 'edit');
+  }, [data, normalizedData, onChange, onScaleChange, onSelectionChange, readOnly]);
+
+  const read = useCallback(() => {
+    if (!instanceRef.current) return undefined;
+    const raw = extractRootData(instanceRef.current.getData?.(true));
+    return raw ? normalizeMindMap(normalizeNodeFromMindMap(raw)) : undefined;
+  }, []);
 
   const scheduleFit = useCallback((resetView = false) => {
     fitTimerRefs.current.forEach((timer) => clearTimeout(timer));
@@ -326,7 +284,11 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
   const applyData = useCallback((nextData: MindMapNode, resetView = false) => {
     if (!instanceRef.current) return;
 
-    const mindMapData = normalizeNodeForMindMap(nextData);
+    const mindMapData = nodeForEditor(nextData);
+    const hasChildren = nextData.children.length > 0;
+    const firstContent = !showingCasesRef.current && hasChildren;
+    showingCasesRef.current = hasChildren;
+    resetView ||= firstContent;
     const nextJson = JSON.stringify(mindMapData);
     if (nextJson === lastSyncedJsonRef.current && !resetView) return;
 
@@ -335,7 +297,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       if (resetView) {
         fitPendingAfterRenderRef.current = true;
       }
-      instanceRef.current.setData?.(mindMapData);
+      if (nextJson !== lastSyncedJsonRef.current) instanceRef.current.updateData?.(mindMapData);
       lastSyncedJsonRef.current = nextJson;
       if (resetView) {
         scheduleFit(true);
@@ -346,19 +308,19 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
   }, [scheduleFit]);
 
   const changePriority = useCallback((priority: Priority) => {
-    if (!priorityEditor || !instanceRef.current) return;
+    if (!priorityEditor || readOnlyRef.current) return;
 
     try {
-      const rawData = extractRootData(instanceRef.current.getData?.(true));
-      const currentData = normalizeNodeFromMindMap(rawData);
-      const nextData = updatePriorityInTree(currentData, priorityEditor.nodeUid, priority);
+      const currentData = read();
+      if (!currentData) return;
+      const nextData = normalizeMindMap(changeNodePriority(currentData, priorityEditor.nodeUid, priority));
       setPriorityEditor(null);
       applyData(nextData);
       onChangeRef.current?.(nextData);
     } catch {
       setPriorityEditor(null);
     }
-  }, [applyData, priorityEditor]);
+  }, [applyData, priorityEditor, read]);
 
   useImperativeHandle(
     ref,
@@ -372,7 +334,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       zoomOut: () => {
         const view = instanceRef.current?.view;
         if (!view) return;
-        view.setScale?.(Math.max((view.scale || 1) - 0.1, 0.5));
+        view.setScale?.(Math.max((view.scale || 1) - 0.1, 0.1));
         syncScale();
       },
       fit: () => {
@@ -390,17 +352,22 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current?.execCommand?.('UNEXPAND_ALL', false);
         scheduleFit();
       },
+      read,
+      isEditing: () => instanceRef.current?.renderer?.textEdit?.isShowTextEdit() ?? false,
       undo: () => {
+        if (readOnlyRef.current) return;
         instanceRef.current?.execCommand?.('BACK');
       },
       redo: () => {
+        if (readOnlyRef.current) return;
         instanceRef.current?.execCommand?.('FORWARD');
       },
+      locate: (id) => instanceRef.current?.execCommand?.('GO_TARGET_NODE', id),
       refresh: () => {
         applyData(currentDataRef.current, true);
       },
     }),
-    [applyData, scheduleFit, syncScale],
+    [applyData, read, scheduleFit, syncScale],
   );
 
   useEffect(() => {
@@ -438,8 +405,17 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current = new MindMap({
           el: containerRef.current,
           data: initialData,
+          readonly: readOnlyRef.current,
           theme: 'default',
+          themeConfig: {
+            backgroundColor: 'transparent', lineColor: '#7ca5a1',
+            root: { fillColor: '#156f68', color: '#ffffff' },
+            second: { fillColor: '#f2f9f8', color: '#193637' },
+          },
+          defaultInsertSecondLevelNodeText: '新模块',
+          defaultInsertBelowSecondLevelNodeText: '新节点',
           layout: 'logicalStructure',
+          resetScaleOnMoveNodeToCenter: false,
           fit: true,
           nodeTextEditZIndex: 1000,
           tagsColorMap: TAG_COLORS,
@@ -452,25 +428,35 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           openRealtimeRenderOnNodeTextEdit: true,
         });
         lastSyncedJsonRef.current = JSON.stringify(initialData);
+        showingCasesRef.current = initialData.children.length > 0;
+        const instance = instanceRef.current;
+        const deleteKeys = 'Del|Backspace|Shift+Backspace';
+        instance.keyCommand?.removeShortcut(deleteKeys);
+        instance.keyCommand?.addShortcut(deleteKeys, () => {
+          const selected = instance.renderer?.activeNodeList ?? [];
+          if (selected.length && selected.every((node) => !node.isRoot)) instance.execCommand?.('REMOVE_NODE', [...selected]);
+        });
 
         const handleDataChange = () => {
-          if (programmaticUpdateRef.current) return;
-          if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
-          changeTimerRef.current = setTimeout(() => {
-            if (!instanceRef.current) return;
-            try {
-              const rawData = extractRootData(instanceRef.current.getData?.(true));
-              const nextData = normalizeNodeFromMindMap(rawData);
-              lastSyncedJsonRef.current = JSON.stringify(normalizeNodeForMindMap(nextData));
-              onChangeRef.current?.(nextData);
-            } catch {
-              // Ignore transient editor states while the user is typing.
-            }
-          }, 120);
+          if (programmaticUpdateRef.current || readOnlyRef.current) return;
+          const nextData = read();
+          if (!nextData) return;
+          const json = JSON.stringify(nodeForEditor(nextData));
+          if (json === lastSyncedJsonRef.current) return;
+          lastSyncedJsonRef.current = json;
+          onChangeRef.current?.(nextData);
         };
 
         const handleScale = (scale: number) => {
           onScaleChangeRef.current?.(Math.round(scale * 100));
+        };
+
+        const handleSelection: MindMapEventHandlers['handleSelection'] = (_, nodes) => {
+          selectionRef.current = nodes;
+          const only = nodes.length === 1 ? nodes[0] : undefined;
+          const uid = only?.nodeData?.data?.uid ?? only?.data?.uid;
+          setSelection(nodes.length ? { root: nodes.some((node) => !!node.isRoot), count: nodes.length } : null);
+          onSelectionChangeRef.current?.(typeof uid === 'string' ? uid : null);
         };
 
         const handleNodeTreeRenderEnd = () => {
@@ -480,6 +466,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         };
 
         const handleNodeTagClick = (node: MindMapNodeLike, item: MindMapTagItem) => {
+          if (readOnlyRef.current) return;
           const priority = normalizePriority(tagText(item));
           if (!priority) return;
 
@@ -516,7 +503,8 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current.on?.('scale', handleScale);
         instanceRef.current.on?.('node_tree_render_end', handleNodeTreeRenderEnd);
         instanceRef.current.on?.('node_tag_click', handleNodeTagClick);
-        instanceRef.current.__handlers = { handleDataChange, handleScale, handleNodeTreeRenderEnd, handleNodeTagClick };
+        instanceRef.current.on?.('node_active', handleSelection);
+        instanceRef.current.__handlers = { handleDataChange, handleScale, handleNodeTreeRenderEnd, handleNodeTagClick, handleSelection };
 
         syncScale();
         scheduleFit(true);
@@ -532,13 +520,13 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       mountedRef.current = false;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [scheduleFit, syncScale]);
+  }, [read, scheduleFit, syncScale]);
 
   useEffect(() => {
     if (!instanceRef.current) return;
-    const nextJson = JSON.stringify(normalizeNodeForMindMap(data || EMPTY_MAP));
+    const nextJson = JSON.stringify(nodeForEditor(data || EMPTY_MAP));
     if (nextJson === lastSyncedJsonRef.current) return;
-    applyData(data || EMPTY_MAP, true);
+    applyData(data || EMPTY_MAP);
   }, [applyData, data]);
 
   useEffect(() => {
@@ -567,7 +555,6 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     const container = containerRef.current;
 
     return () => {
-      if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       fitTimerRefs.current.forEach((timer) => clearTimeout(timer));
       fitTimerRefs.current = [];
@@ -578,6 +565,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           instanceRef.current.off?.('scale', handlers.handleScale);
           instanceRef.current.off?.('node_tree_render_end', handlers.handleNodeTreeRenderEnd);
           instanceRef.current.off?.('node_tag_click', handlers.handleNodeTagClick);
+          instanceRef.current.off?.('node_active', handlers.handleSelection);
         }
         instanceRef.current.destroy?.();
         instanceRef.current = null;
@@ -588,10 +576,38 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     };
   }, []);
 
+  function edit(command: 'rename' | 'child' | 'sibling' | 'up' | 'down' | 'delete') {
+    const instance = instanceRef.current;
+    const nodes = selectionRef.current;
+    if (!instance || readOnly || !nodes.length) return;
+    const [current] = nodes;
+    if (command === 'rename') {
+      if (nodes.length === 1 && !current.isRoot) void instance.renderer?.textEdit?.show({ node: current });
+      return;
+    }
+    if (command === 'child' || command === 'sibling') {
+      if (command === 'sibling' && nodes.some((node) => node.isRoot)) return;
+      instance.execCommand?.(command === 'child' ? 'INSERT_CHILD_NODE' : 'INSERT_NODE', true, [...nodes]);
+      return;
+    }
+    if (nodes.some((node) => node.isRoot)) return;
+    if (command === 'delete') instance.execCommand?.('REMOVE_NODE', [...nodes]);
+    else if (nodes.length === 1) instance.execCommand?.(command === 'up' ? 'UP_NODE' : 'DOWN_NODE', current);
+  }
+
+  const nodeTools = [
+    { command: 'rename', label: '编辑文字', icon: Pencil, single: true, root: false },
+    { command: 'child', label: '新增下级', icon: CornerDownRight, single: false, root: true },
+    { command: 'sibling', label: '新增同级', icon: Plus, single: false, root: false },
+    { command: 'up', label: '上移节点', icon: ArrowUp, single: true, root: false },
+    { command: 'down', label: '下移节点', icon: ArrowDown, single: true, root: false },
+    { command: 'delete', label: '删除节点', icon: Trash2, single: false, root: false },
+  ] as const;
+
   return (
-    <div className="relative h-full min-h-[420px] w-full overflow-hidden rounded-lg border bg-white">
+    <div className="mindmap-grid relative h-full w-full overflow-hidden rounded-xl border border-[#dce8e7] bg-[#f7faf9]">
       {renderError ? <p className="absolute left-3 top-3 z-10 text-xs text-red-600">{renderError}</p> : null}
-      {priorityEditor ? (
+      {priorityEditor && !readOnly ? (
         <div
           className="absolute z-20 flex items-center gap-1 rounded-lg border bg-white p-1 shadow-lg"
           style={{ left: priorityEditor.x, top: priorityEditor.y }}
@@ -612,7 +628,19 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           ))}
         </div>
       ) : null}
-      <div ref={containerRef} className="h-full w-full" />
+      <div ref={containerRef} className="h-full w-full" aria-label="测试用例脑图画布" />
+      {selection && !readOnly ? (
+        <div role="toolbar" aria-label="节点操作" onMouseDown={(event) => event.preventDefault()}
+          className="absolute bottom-4 left-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap gap-0.5 rounded-xl border border-[#dce8e7] bg-white p-1.5 shadow-lg shadow-[#173938]/8">
+          {nodeTools.filter((item) => (item.root || !selection.root) && (!item.single || selection.count === 1)).map(({ command, icon: Icon, label }) => (
+            <button type="button" key={command} aria-label={label} title={label}
+              className="flex h-8 items-center gap-1 rounded-md px-2 text-xs text-slate-700 hover:bg-[#eaf4f2] focus-visible:outline-2 focus-visible:outline-offset-1"
+              onClick={() => edit(command)}>
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">{label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 });

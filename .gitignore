@@ -34,3 +34,7 @@ pnpm-debug.log*
 # os files
 .DS_Store
 Thumbs.db
+
+# Local MCP and evaluation data
+mcp.json
+.eval-results/

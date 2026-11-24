@@ -1,243 +1,46 @@
+import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
-import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { mindMapSchema, testCaseSchema } from '@/lib/agent/contracts';
+import { buildMindMap, normalizeMindMap, readMindMap } from '@/lib/agent/mindMap';
+import { errorResponse, parseRequest } from '@/lib/agent/modelConfig';
+import type { MindMapNode } from '@/lib/agent/types';
 
-type MindMapNode = {
-  data: {
-    text: string;
-    uid?: string;
-    id?: string;
-    tag?: string[];
-    priority?: 'P0' | 'P1' | 'P2' | 'P3';
-  };
-  children: MindMapNode[];
-};
-
-type TestCaseItem = {
-  id: string;
-  category: string;
-  topic: string;
-  priority: 'P0' | 'P1' | 'P2' | 'P3';
-  precondition: string;
-  steps: string;
-  expected: string;
-};
-
-const mindMapNodeDataSchema = z.object({
-  text: z.string(),
-  uid: z.string().optional(),
-  id: z.string().optional(),
-  tag: z.array(z.string()).optional(),
-  priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
-}).passthrough();
-
-const mindMapSchema: z.ZodType<MindMapNode> = z.lazy(() =>
-  z.object({
-    data: mindMapNodeDataSchema,
-    children: z.array(mindMapSchema),
-  }),
-);
-
-const caseSchema = z.object({
-  id: z.string(),
-  category: z.string(),
-  topic: z.string(),
-  priority: z.enum(['P0', 'P1', 'P2', 'P3']),
-  precondition: z.string(),
-  steps: z.string(),
-  expected: z.string(),
-});
-
-const reqSchema = z.object({
+const inputSchema = z.object({
   mindMap: mindMapSchema,
-  testCases: z.array(caseSchema).optional(),
+  testCases: z.array(testCaseSchema).optional(),
   title: z.string().optional(),
 });
 
-function uid() {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-}
-
-function parsePriorityFromText(text: string): { cleanTitle: string; priority?: 'P0' | 'P1' | 'P2' | 'P3' } {
-  const raw = (text || '').trim();
-  const match = raw.match(/^\[?\s*(P[0-3])\s*\]?\s*[-:：]?\s*(.*)$/i);
-  if (!match) {
-    return { cleanTitle: stripPreconditionPrefix(raw) };
-  }
-  const priority = match[1].toUpperCase() as 'P0' | 'P1' | 'P2' | 'P3';
-  const cleanTitle = stripPreconditionPrefix((match[2] || '').trim()) || raw;
-  return { cleanTitle, priority };
-}
-
-function stripPreconditionPrefix(text: string) {
-  return text.replace(/^\s*!\s*/, '').trim();
-}
-
-function toPriorityMarker(priority: 'P0' | 'P1' | 'P2' | 'P3') {
-  // XMind 任务优先级图标：1~4
-  const markerId = {
-    P0: 'priority-1',
-    P1: 'priority-2',
-    P2: 'priority-3',
-    P3: 'priority-4',
-  }[priority];
-  return markerId;
-}
-
-function toXmindTopic(node: MindMapNode): Record<string, unknown> {
-  const parsed = parsePriorityFromText(node.data.text || '未命名节点');
-  const priority = node.data.priority || parsed.priority;
-  const topic: Record<string, unknown> = {
-    id: uid(),
-    title: parsed.cleanTitle || '未命名节点',
-  };
-
-  if (priority) {
-    const markerId = toPriorityMarker(priority);
-    topic.markers = [{ markerId }];
-    topic.markerRefs = [markerId];
-  }
-
-  if (node.children.length > 0) {
-    topic.children = {
-      attached: node.children.map((child) => toXmindTopic(child)),
-    };
-  }
-
-  return topic;
-}
-
-function sanitizeLabel(text: string) {
-  return (text || '').trim();
-}
-
-function splitNumberedLines(text: string) {
-  return (text || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
-function buildExpectedLine(stepIndex: number, expectedLines: string[]) {
-  if (expectedLines[stepIndex]) return expectedLines[stepIndex];
-  if (expectedLines.length > 0) return expectedLines[0];
-  return `期望结果 ${stepIndex + 1}`;
-}
-
-function buildRootFromCases(testCases: TestCaseItem[]) {
-  const grouped = new Map<string, Map<string, TestCaseItem[]>>();
-
-  for (const item of testCases) {
-    const category = sanitizeLabel(item.category) || '功能测试';
-    const precondition = sanitizeLabel(item.precondition) || '默认前置条件';
-    if (!grouped.has(category)) {
-      grouped.set(category, new Map<string, TestCaseItem[]>());
-    }
-    const preMap = grouped.get(category)!;
-    if (!preMap.has(precondition)) {
-      preMap.set(precondition, []);
-    }
-    preMap.get(precondition)!.push(item);
-  }
-
-  const categoryTopics = Array.from(grouped.entries()).map(([category, preMap]) => ({
-    id: uid(),
-    title: `@${category}`,
-    children: {
-      attached: Array.from(preMap.entries()).map(([precondition, items]) => ({
-        id: uid(),
-        title: stripPreconditionPrefix(precondition) || '默认前置条件',
-        children: {
-          attached: items.map((it) => {
-            const stepLines = splitNumberedLines(it.steps);
-            const expectedLines = splitNumberedLines(it.expected);
-            const safeSteps = stepLines.length > 0 ? stepLines : ['1. 未提供测试步骤'];
-
-            return {
-              id: sanitizeLabel(it.id) || uid(),
-              title: sanitizeLabel(it.topic) || '未命名测试',
-              priority: it.priority,
-              precondition: it.precondition,
-              steps: it.steps,
-              expected: it.expected,
-              markers: [{ markerId: toPriorityMarker(it.priority) }],
-              markerRefs: [toPriorityMarker(it.priority)],
-              children: {
-                attached: [
-                  {
-                    id: uid(),
-                    title: `测试步骤\n${safeSteps.join('\n')}`,
-                    children: {
-                      attached: [
-                        {
-                          id: uid(),
-                          title: `期望结果\n${(expectedLines.length > 0
-                            ? expectedLines
-                            : safeSteps.map((_, idx) => buildExpectedLine(idx, expectedLines)
-                          )).join('\n')}`,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            };
-          }),
-        },
-      })),
-    },
-  }));
-
+function toTopic(node: MindMapNode): Record<string, unknown> {
+  const priority = node.data.priority;
   return {
-    id: 'root',
-    title: '@测试用例',
-    root: true,
-    children: {
-      attached: categoryTopics,
-    },
+    id: node.data.uid || randomUUID(),
+    class: 'topic',
+    title: node.data.text,
+    ...(priority && { markers: [{ markerId: 'priority-' + (Number(priority[1]) + 1) }] }),
+    ...(node.children.length && { children: { attached: node.children.map(toTopic) } }),
   };
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const raw = await req.json();
-    const parsed = reqSchema.safeParse(raw);
-
-    if (!parsed.success) {
-      return NextResponse.json({ error: '请求参数不合法' }, { status: 400 });
-    }
-
-    const { mindMap, testCases, title } = parsed.data;
-    const sheetTitle = title?.trim() || mindMap.data.text || '测试用例';
-    const rootTopic = testCases && testCases.length > 0 ? buildRootFromCases(testCases) : toXmindTopic(mindMap);
-
-    const content = [
-      {
-        id: uid(),
-        class: 'sheet',
-        title: sheetTitle,
-        rootTopic,
-      },
-    ];
-
+    const { mindMap, testCases, title } = await parseRequest(request, inputSchema);
+    let tree = normalizeMindMap(mindMap);
+    if (!tree.children.length && testCases?.length) tree = buildMindMap(testCases);
+    if (!readMindMap(tree).cases.length) return Response.json({ error: '脑图中没有可导出的测试用例' }, { status: 400 });
+    const sheetTitle = title?.trim() || tree.data.text || '测试用例';
     const zip = new JSZip();
-    zip.file('content.json', JSON.stringify(content, null, 2));
-    zip.file('metadata.json', JSON.stringify({ creator: { name: 'next-ai-test-cases' } }, null, 2));
-
-    const binary = await zip.generateAsync({ type: 'uint8array' });
-    const arrayBuffer = binary.buffer.slice(
-      binary.byteOffset,
-      binary.byteOffset + binary.byteLength,
-    ) as ArrayBuffer;
-
-    return new NextResponse(arrayBuffer, {
+    zip.file('content.json', JSON.stringify([{ id: randomUUID(), class: 'sheet', title: sheetTitle, rootTopic: toTopic(tree) }]));
+    zip.file('metadata.json', JSON.stringify({ creator: { name: 'next-ai-test-cases' } }));
+    zip.file('manifest.json', JSON.stringify({ 'file-entries': { 'content.json': {}, 'metadata.json': {} } }));
+    return new Response(await zip.generateAsync({ type: 'arraybuffer' }), {
       headers: {
         'Content-Type': 'application/vnd.xmind.workbook',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(sheetTitle)}.xmind"`,
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(sheetTitle.replace(/['()*]/g, '')),
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error);
   }
 }

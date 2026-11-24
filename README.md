@@ -1,210 +1,77 @@
 # next-ai-test-cases
 
-测试用例生成助手，基于 Next.js、LangChain、shadcn/ui 和 simple-mind-map 构建。
+把需求转成可手工执行的测试用例，直接在脑图中编辑，再导出 CSV 或 XMind。支持用对话增删用例、改名、调整优先级或修改步骤与预期。两种导出都读取当前脑图。桌面上脑图和对话并排，窄屏上下排列，可以收起对话扩大画布。
 
-应用以脑图编辑区为主画布，AI 对话以可拖拽气泡浮层展示。首次发送需求后，系统会先生成一级模块骨架，再按模块逐步补充测试用例，避免长时间空白等待；后续可以通过连续对话局部增删改脑图。
+## 界面
 
-## 核心功能
+| 工作区 | 生成中 |
+| --- | --- |
+| ![脑图工作区和需求输入](doc/img/workspace.png) | ![显示生成进度和停止按钮](doc/img/generating.png) |
 
-- AI 分步生成测试用例：先规划一级模块，再逐模块生成用例
-- 连续对话修改脑图：支持新增、删除、改名、调整优先级、补充场景
-- 大画布脑图编辑：缩放、适应画布、展开/折叠、撤销/重做、全屏
-- 气泡式 AI 对话面板：可拖拽、可收起，不占用左右分屏空间
-- 脑图结构：类别 -> 前置条件 -> 用例 -> 测试步骤 -> 期望结果
-- 优先级以 `P0`/`P1`/`P2`/`P3` 标签展示，不写入用例标题
-- 前置条件以 `前置` 标签展示，不在标题里展示 `!`
-- 点击优先级标签可直接切换 P0-P3
-- 导出 CSV（含测试名称、优先级、前置条件、步骤、期望结果）
-- 导出 XMind（优先级写入 XMind marker）
-- 可选 MCP：仅当需求包含链接或外部文档关键词时尝试读取 `mcp.json`
+| 编辑与导出 | 模型设置 |
+| --- | --- |
+| ![生成后的脑图、修改对话与导出按钮](doc/img/editor.png) | ![模型地址、API Key、测试连接和记住设置](doc/img/model-settings.png) |
 
-## 界面截图
-
-### 空白态
-
-![空白态](doc/img/空白页.png)
-
-### 分步生成中
-
-![分步生成中](doc/img/分步生成中.png)
-
-### 标签脑图
-
-![标签脑图](doc/img/标签脑图.png)
-
-### 生成完成
-
-![生成](doc/img/生成.png)
-
-### 对话修改
-
-![对话修改](doc/img/修改.png)
-
-### 导出 CSV
-
-![导出 CSV](doc/img/导出csv.png)
-
-### 导出 XMind
-
-![导出 XMind](doc/img/导出xmind.png)
-
-## 技术栈
-
-- Next.js 16（App Router）
-- React 19
-- LangChain.js 1.x
-- @langchain/openai
-- @langchain/mcp-adapters
-- shadcn/ui
-- lucide-react
-- simple-mind-map `0.14.0-fix.2`
-- JSZip
+截图使用同一份虚构的团队邀请需求和独立的演示网关。
 
 ## 快速开始
 
-```bash
-pnpm install
+需要 Node.js 22.13 或更新版本和 pnpm。
+
+~~~bash
+pnpm install --frozen-lockfile
+pnpm dev
+~~~
+
+打开 http://localhost:3000，点右上角「模型设置」，填写 API Key。模型名留空时使用服务端设定，服务端的默认模型是 `gpt-4.1-mini`。点「测试连接」发送一次简短请求，再点「保存」。
+
+也可以复制配置模板，在本机填好默认值后启动：
+
+~~~bash
 cp .env.example .env.local
-pnpm dev
-```
+~~~
 
-默认访问：
+| 本地环境变量 | 用途 |
+| --- | --- |
+| `OPENAI_API_KEY` | 服务端默认密钥，留空时由用户在页面输入 |
+| `OPENAI_MODEL` | 服务端默认模型 |
+| `OPENAI_BASE_URL` | 服务端默认兼容网关地址，默认 `https://api.openai.com/v1` |
+| `OPENAI_BASE_URL_ALLOWLIST` | 页面可填写的附加 HTTPS 网关，多个完整地址用逗号分隔 |
 
-```text
-http://localhost:3000
-```
+页面输入的 Key 默认在刷新时清除。勾选「在此浏览器记住设置和密钥」后，浏览器会跨会话保存此站点的配置。用「清除设置」移除已保存的配置。换 Base URL 会清空页面中的 Key，需为新网关填写自己的 Key。部署给多人使用时，给持有服务端默认 Key 和私有 MCP 的实例加访问控制。
 
-如果需要固定到 3001：
+### 本机兼容网关
 
-```bash
-pnpm exec next dev -p 3001
-```
+如果要连接本机端口或填写自定义 HTTP(S) 网关，用回环模式启动：
 
-## 环境变量
-
-`.env.local`：
-
-```env
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.1
-OPENAI_BASE_URL=
-```
-
-说明：
-
-- `OPENAI_API_KEY` 必填
-- `OPENAI_MODEL` 选填；不填时服务端默认使用 `gpt-4.1-mini`
-- `OPENAI_BASE_URL` 选填，适用于 OpenAI 兼容网关
-- 使用 `gpt-5*` 模型时，代码会自动避免传入非默认 temperature
-
-## MCP 配置
-
-`mcp.json` 是可选文件，没有也不影响普通需求生成。
-
-当需求文本包含 URL、Confluence、Kaptain、Jira、Wiki 等外部文档关键词时，服务端会尝试读取项目根目录的 `mcp.json` 并加载 MCP 工具；如果文件不存在或配置无效，会自动回退到普通模型调用。
-
-可从模板复制：
-
-```bash
-cp mcp.json.example mcp.json
-```
-
-当前支持：
-
-- `stdio`
-- `http`
-- `sse`
-
-加载逻辑位于：
-
-- `src/lib/agent/testCaseAgent.ts`
-
-## 生成流程
-
-首次发送需求时，前端不再等待一次性大结果，而是分步请求：
-
-1. `POST /api/test-case-agent/plan`
-   - 生成一级模块规划
-   - 返回模块骨架脑图
-   - 页面立即渲染一级节点
-
-2. `POST /api/test-case-agent/module`
-   - 按模块逐个生成测试用例
-   - 每生成完一个模块就合并进当前脑图
-   - 聊天气泡显示当前模块生成进度
-
-旧的一次性接口仍保留：
-
-- `POST /api/test-case-agent`
-
-## 脑图数据约定
-
-根节点：
-
-```text
-@测试用例
-```
-
-节点层级：
-
-```text
-@类别
-前置条件节点（tag: ["前置"]）
-测试用例节点（data.priority + tag: ["P1"]）
-测试步骤
-期望结果
-```
-
-约定：
-
-- 类别节点标题保留 `@`，用于识别一级测试类别
-- 前置条件节点标题不展示 `!`，使用 `tag: ["前置"]` 标识
-- 用例标题不展示 `[P1]`，优先级写在 `data.priority` 和 `data.tag`
-- 旧数据中的 `!前置条件`、`[P1] 用例名` 会在前端和服务端归一化时清洗
-
-## 导出说明
-
-### CSV 列结构
-
-- `测试名称`
-- `优先级`
-- `前置条件`
-- `测试步骤`
-- `期望结果`
-
-### XMind 结构
-
-- 根节点：`@测试用例`
-- 二级：`@类别`
-- 三级：前置条件
-- 四级：测试用例节点
-- 五级：`测试步骤`
-- 六级：`期望结果`
-
-优先级会写入 XMind marker：
-
-- `P0` -> `priority-1`
-- `P1` -> `priority-2`
-- `P2` -> `priority-3`
-- `P3` -> `priority-4`
-
-## 主要目录
-
-- `src/app/page.tsx`：主页面，包含脑图画布、气泡聊天和分步生成流程
-- `src/components/mindmap/mindmap-view.tsx`：simple-mind-map 封装、标签展示、优先级切换
-- `src/lib/agent/testCaseAgent.ts`：Agent、提示词、结构化输出、MCP 加载、脑图构建
-- `src/lib/agent/types.ts`：测试用例、模块规划、脑图类型
-- `src/app/api/test-case-agent/plan/route.ts`：一级模块规划接口
-- `src/app/api/test-case-agent/module/route.ts`：单模块用例生成接口
-- `src/app/api/test-case-agent/route.ts`：一次性生成接口（兼容保留）
-- `src/app/api/test-case-agent/chat/route.ts`：连续对话更新接口
-- `src/app/api/test-case-agent/export-xmind/route.ts`：导出 XMind
-- `mcp.json.example`：MCP 配置模板
-
-## 常用命令
-
-```bash
-pnpm dev
-pnpm lint
+~~~bash
+pnpm dev:local
+# 生产构建后的启动方式
 pnpm build
-```
+pnpm start:local -p 3000
+~~~
+
+打开 http://127.0.0.1:3000 后，在页面填入网关的 OpenAI 兼容 API 根地址，例如 `http://127.0.0.1:8080/v1`。该模式用于单机使用，通过回环地址监听。
+
+## 用例、资料和导出
+
+- 在 AI 对话输入需求正文，或先展开「需求示例」。有脑图后，选择一个节点可查看与它相关的「猜你想问」，点击建议会填入输入框供修改。
+- 用例默认一次生成，处理中可以停止。对话里可以展开资料读取和结构校验的执行记录。
+- 在画布中选择节点可编辑文字、添加同级或下级、移动和删除。支持查找节点、缩放、全屏、展开折叠和撤销重做。优先级可在标签上修改。
+- 脑图按「类别 → 前置条件 → 用例 → 测试步骤 → 期望结果」组织。步骤和预期逐项对应，可执行用例才会计入生成结果。信息不足时在摘要里说明缺口。
+- CSV 包含用例名、优先级、前置条件、步骤和预期。XMind 保留脑图层级，使用 `P0` 到 `P3` 对应的 `priority-1` 到 `priority-4` 标记。
+
+可选的 MCP 支持按需求正文中的 URL 读取资料。复制 `mcp.json.example` 到 `mcp.json` 后，为每个服务填写 `documentTool`（读取工具名）、`urlArgument`（该工具接收 URL 的字段）和 `allowedOrigins`（可读文档所在的精确来源）。支持 `stdio`、Streamable HTTP 和 SSE。旧配置需补齐这三个字段。结果会显示资料读取缺口。如果请求只提供了链接，请同时提供可读的资料或粘贴需求正文。
+
+原有的 `/api/test-case-agent`、`/plan`、`/module`、`/chat` 和 `/export-xmind` 入口继续可用。对话使用 `/api/test-case-agent/conversation` 的 AI SDK 消息流。
+
+## 验证与评测
+
+~~~bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+~~~
+
+[消融实验与复现命令](doc/refactor-evaluation.md) 包含冻结样本、覆盖评审、真实模型对照和最终流程选择。
