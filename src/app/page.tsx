@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ConversationEntry } from '@/components/workspace/conversation-entry';
 import { ChatSuggestions } from '@/components/workspace/chat-support';
 import { ModelSettingsDialog } from '@/components/workspace/model-settings';
+import { WorkspaceExtensions } from '@/components/workspace/workspace-extensions';
 import { useCaseWorkspace } from '@/components/workspace/use-case-workspace';
 
 export default function Page() {
@@ -323,7 +324,8 @@ export default function Page() {
                       </Button>
                     </div>
                   )}
-                  <div className="mt-2 flex items-center justify-end gap-2">
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    <WorkspaceExtensions value={workspace.extensions} onChange={workspace.setExtensions} disabled={loadingChat} />
                     {workspace.mode === 'generate' && (
                       <Button variant="outline" size="sm" onClick={workspace.cancel}>停止生成</Button>
                     )}

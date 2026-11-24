@@ -4,13 +4,14 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { conversationText, type ConversationMessage, type RetryRequest } from '@/lib/agent/conversation';
+import type { Extensions } from '@/lib/agent/extensionContracts';
 import { EMPTY_MAP, normalizeMindMap, readMindMap, toCsv } from '@/lib/agent/mindMap';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
 import type { MindMapNode } from '@/lib/agent/types';
 import { readSavedSettings } from './model-settings';
 
-type Pending = { retry: RetryRequest; errors: string[] };
-type Run = { atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
+type Pending = { retry: RetryRequest; extensions: Extensions; errors: string[] };
+type Run = { extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
 
 function download(blob: Blob, name: string) {
   const link = document.createElement('a');
@@ -23,6 +24,7 @@ function download(blob: Blob, name: string) {
 export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEditorEditing: () => boolean) {
   const [mindMap, setMindMap] = useState(EMPTY_MAP);
   const [settings, setSettings] = useState<ModelSettings>({});
+  const [extensions, setExtensions] = useState<Extensions>({});
   const [mode, setMode] = useState<'generate' | 'chat' | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -83,6 +85,7 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
               modules: event.modules, sourceHash: event.sourceHash,
               failedIds: run.previous?.retry.plan.failedIds ?? event.modules.map(({ id }) => id),
             } },
+            extensions: run.extensions,
             errors: [],
           };
           if (!run.previous) commitMap(event.mindMap);
@@ -114,10 +117,11 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
     if (current) commitMap(current);
     const requirement = previous?.retry.requirement ?? text;
     const run: Run = {
+      extensions: previous?.extensions ?? extensions,
       atRevision: revision.current,
       requirement,
       previous,
-      pending: previous ? { retry: { ...previous.retry, plan: { ...previous.retry.plan } }, errors: [] } : null,
+      pending: previous ? { ...previous, retry: { ...previous.retry, plan: { ...previous.retry.plan } }, errors: [] } : null,
     };
     active.current = run;
     const generating = !!previous || !mapRef.current.children.length;
@@ -127,7 +131,7 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
     setError('');
     setWarning('');
     try {
-      await chat.sendMessage({ text }, { body: { settings, currentMindMap: mapRef.current, retry: previous?.retry } });
+      await chat.sendMessage({ text }, { body: { settings, extensions: run.extensions, currentMindMap: mapRef.current, retry: previous?.retry } });
     } catch {
       setError('对话连接中断，请稍后重试。');
     } finally {
@@ -165,7 +169,7 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
   }
 
   return {
-    mindMap, commitMap, settings, setSettings, messages: chat.messages, send, progress, mode,
+    mindMap, commitMap, settings, setSettings, extensions, setExtensions, messages: chat.messages, send, progress, mode,
     error, setError, warning, retry, exporting, exportCsv, exportXmind,
     stats: { caseCount: cases.length, categories, preconditions, priorities },
     retryFailed: () => retry && send('重试未完成的模块', retry),

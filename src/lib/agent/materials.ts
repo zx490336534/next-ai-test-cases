@@ -6,8 +6,10 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestError } from './modelConfig';
+import type { TextSkill } from './extensionContracts';
 
 const sourceServer = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
   documentTool: z.string().min(1),
   urlArgument: z.string().min(1),
   allowedOrigins: z.array(z.string().url()).min(1),
@@ -20,7 +22,7 @@ const sourceServer = z.object({
   headers: z.record(z.string(), z.string()).optional(),
 });
 
-export type MaterialSnapshot = { requirement: string; documents: { url: string; text: string }[]; missing: number };
+export type MaterialSnapshot = { requirement: string; documents: { url: string; text: string }[]; missing: number; skills?: TextSkill[] };
 
 async function loadServers() {
   try {
@@ -30,6 +32,10 @@ async function loadServers() {
   } catch {
     return {};
   }
+}
+
+export async function listMcpSources() {
+  return Object.entries(await loadServers()).map(([id, server]) => ({ id, name: server.name ?? id }));
 }
 
 async function readDocument(server: z.infer<typeof sourceServer>, url: string, signal?: AbortSignal) {
@@ -63,11 +69,16 @@ export function requirementLinks(requirement: string) {
   return [...new Set((requirement.match(/https?:\/\/[^\s<>"'，。；、！？）)\]]+/gi) ?? []).map((url) => url.replace(/[.,;]+$/, '')))];
 }
 
-export async function collectMaterials(requirement: string, signal?: AbortSignal): Promise<MaterialSnapshot> {
+export async function collectMaterials(requirement: string, signal?: AbortSignal, mcpIds?: string[]): Promise<MaterialSnapshot> {
   const links = requirementLinks(requirement);
   const documents: MaterialSnapshot['documents'] = [];
   if (!links.length) return { requirement, documents, missing: 0 };
-  const servers = Object.values(await loadServers());
+  const configured = await loadServers();
+  const selected = mcpIds ? new Set(mcpIds) : undefined;
+  if (selected && [...selected].some((id) => !Object.hasOwn(configured, id))) {
+    throw new RequestError('已挂载 MCP 列表已变化，请重新选择', 400);
+  }
+  const servers = Object.entries(configured).filter(([id]) => !selected || selected.has(id)).map(([, server]) => server);
   for (const link of links.slice(0, 4)) {
     signal?.throwIfAborted();
     try {

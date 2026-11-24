@@ -3,12 +3,15 @@ import { z } from 'zod';
 import { chatAndUpdateMindMap } from '@/lib/agent/chatEdits';
 import type { ConversationEvent, ConversationMessage } from '@/lib/agent/conversation';
 import { chatRequestSchema, requirementSchema } from '@/lib/agent/contracts';
+import { extensionsSchema } from '@/lib/agent/extensionContracts';
+import { resolveSkills } from '@/lib/agent/skills';
 import { generationConcurrency, retrySchema, runGeneration, type Activity, type GenerationEvent } from '@/lib/agent/generation';
 import { collectMaterials, requirementLinks } from '@/lib/agent/materials';
 import { createModel, modelError } from '@/lib/agent/model';
 import { errorResponse, modelRequestSchema, parseRequest, resolveModelSettings } from '@/lib/agent/modelConfig';
 
 const conversationSchema = chatRequestSchema.merge(modelRequestSchema).extend({
+  extensions: extensionsSchema.optional(),
   retry: z.object({ requirement: requirementSchema, plan: retrySchema }).optional(),
 }).refine(({ messages }) => messages.at(-1)?.role === 'user');
 
@@ -45,24 +48,31 @@ export async function POST(request: Request) {
         }
         writer.write({ type: 'start' });
         try {
-          if (input.currentMindMap.children.length && !input.retry) {
+          const editing = input.currentMindMap.children.length > 0 && !input.retry;
+          const requirement = input.retry?.requirement ?? input.messages.at(-1)!.content;
+          const hasLinks = requirementLinks(requirement).length > 0;
+          const source = { id: 'materials', kind: 'tool' as const, label: '读取外部资料' };
+          const skills = await resolveSkills(input.extensions?.installedSkillIds, input.extensions?.importedSkills);
+          if (skills.length) trace({
+            id: 'skills', kind: 'step', label: '载入 Skill', state: 'done', detail: '已载入 ' + skills.length + ' 个 Skill',
+          });
+          if (hasLinks) trace({ ...source, state: 'running' });
+          const materials = await collectMaterials(requirement, signal, input.extensions?.mcpIds);
+          if (skills.length) materials.skills = skills;
+          if (hasLinks) trace({
+            ...source, state: materials.missing ? 'warning' : 'done',
+            detail: '已读取 ' + materials.documents.length + ' 份' + (materials.missing ? '，' + materials.missing + ' 份不可用' : ''),
+          });
+          if (editing) {
+            if (materials.missing) emitData({ type: 'warning', message: materials.missing + ' 份资料未读取。' });
             const step = { id: 'chat', kind: 'step' as const, label: '解析指令并校验修改范围' };
             trace({ ...step, state: 'running' });
-            const update = await chatAndUpdateMindMap(model, input);
+            const update = await chatAndUpdateMindMap(model, { ...input, materials });
             signal.throwIfAborted();
             trace({ ...step, state: 'done', detail: '已返回节点修改建议或澄清' });
             emitData({ type: 'edit', mindMap: update.mindMap });
             text(update.assistantReply);
           } else {
-            const requirement = input.retry?.requirement ?? input.messages.at(-1)!.content;
-            const hasLinks = requirementLinks(requirement).length > 0;
-            const source = { id: 'materials', kind: 'tool' as const, label: '读取外部资料' };
-            if (hasLinks) trace({ ...source, state: 'running' });
-            const materials = await collectMaterials(requirement, signal);
-            if (hasLinks) trace({
-              ...source, state: materials.missing ? 'warning' : 'done',
-              detail: '已读取 ' + materials.documents.length + ' 份' + (materials.missing ? '，' + materials.missing + ' 份不可用' : ''),
-            });
             function emit(event: GenerationEvent) {
               if (event.type === 'activity') trace(event.item);
               else {

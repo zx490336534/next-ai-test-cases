@@ -12,6 +12,10 @@
 | --- | --- |
 | ![生成后的脑图、修改对话与导出按钮](doc/img/editor.png) | ![模型地址、API Key、测试连接和记住设置](doc/img/model-settings.png) |
 
+| 选择挂载的 MCP 与导入 Skill | 生成时的扩展执行记录 |
+| --- | --- |
+| ![选择资料读取服务，上传并载入 Skill 压缩包](doc/img/extensions.png) | ![执行记录显示载入两项 Skill 和读取一份文档](doc/img/extensions-used.png) |
+
 截图使用同一份虚构的团队邀请需求和独立的演示网关。
 
 ## 快速开始
@@ -61,7 +65,17 @@ pnpm start:local -p 3000
 - 脑图按「类别 → 前置条件 → 用例 → 测试步骤 → 期望结果」组织。步骤和预期逐项对应，可执行用例才会计入生成结果。信息不足时在摘要里说明缺口。
 - CSV 包含用例名、优先级、前置条件、步骤和预期。XMind 保留脑图层级，使用 `P0` 到 `P3` 对应的 `priority-1` 到 `priority-4` 标记。
 
-可选的 MCP 支持按需求正文中的 URL 读取资料。复制 `mcp.json.example` 到 `mcp.json` 后，为每个服务填写 `documentTool`（读取工具名）、`urlArgument`（该工具接收 URL 的字段）和 `allowedOrigins`（可读文档所在的精确来源）。支持 `stdio`、Streamable HTTP 和 SSE。旧配置需补齐这三个字段。结果会显示资料读取缺口。如果请求只提供了链接，请同时提供可读的资料或粘贴需求正文。
+### MCP 与 Skill
+
+在对话输入框下方打开「MCP 与 Skill」。选择和上传的内容在当前页面生效，可用于生成和对话修改。
+
+- **选择 MCP。** 页面会列出已挂载的服务。默认按链接来源自动匹配，也可勾选指定服务或停用全部。在本轮消息粘贴文档链接即可触发读取。对话执行记录会显示实际读取结果。
+- **上传 Skill。** 选择 ZIP、`.skill`（ZIP 格式）或 Markdown。压缩包可以包含一个或多个 `SKILL.md`，支持外层目录和多 Skill。应用自动载入 Skill 正文、同级 Markdown/文本及 `references/` 中的文字资料。导入成功后立即启用，可预览和移除。脚本、图片与其他二进制内容会跳过，上传文件保留在处理内存中。
+- **选择已安装 Skill。** 在项目目录放入 `skills/<id>/SKILL.md`，可选文字资料放在同级或 `references/`，随后在页面勾选该 Skill。`skills/` 与 `mcp.json` 都由部署者在本地维护。
+
+部署者可从 `mcp.json.example` 复制配置模板，并为每个服务填写 `documentTool`、`urlArgument`、`allowedOrigins`，以及可选的显示名 `name`。传输方式支持 `stdio`、Streamable HTTP 和 SSE。页面仅展示服务标识和名称，连接参数与凭据留在服务端。
+
+压缩包上限为 8 MB，单个文本文件上限为 64 KB。每次最多启用 8 个 Skill，注入的正文和参考资料合计上限为 40,000 字符。
 
 原有的 `/api/test-case-agent`、`/plan`、`/module`、`/chat` 和 `/export-xmind` 入口继续可用。对话使用 `/api/test-case-agent/conversation` 的 AI SDK 消息流。
 

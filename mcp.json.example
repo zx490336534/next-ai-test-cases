@@ -7,7 +7,8 @@
       "urlArgument": "url",
       "allowedOrigins": [
         "https://spec.example.test"
-      ]
+      ],
+      "name": "示例文档 MCP"
     }
   }
 }

@@ -1,3 +1,4 @@
+import { withSkillGuidance } from './extensionContracts';
 import { casesSchema, planSchema } from './contracts';
 import { buildCategoryNode, buildMindMap, buildSkeleton, stripCategory, validateCaseContent } from './mindMap';
 import type { MaterialSnapshot } from './materials';
@@ -40,17 +41,17 @@ function checkedCases(cases: TestCaseItem[], category?: string) {
 }
 
 export async function generateTestCases(model: Model, materials: MaterialSnapshot, observe?: (raw: unknown) => void): Promise<TestCaseAgentResult> {
-  const result = await structured(model, generationRules, materials, casesSchema, observe);
+  const result = await structured(model, withSkillGuidance(generationRules, materials.skills), materials, casesSchema, observe);
   const cases = checkedCases(result.cases).map((item, index) => ({ ...item, id: 'case-' + (index + 1) }));
   return { summary: result.summary, cases, mindMap: buildMindMap(cases) };
 }
 
 export async function planTestCaseModules(model: Model, materials: MaterialSnapshot): Promise<TestCasePlanResult> {
-  const result = await structured(model, [
+  const result = await structured(model, withSkillGuidance([
     '把需求拆成互不重叠、便于验证的测试模块。小需求可以只有一组，复杂需求最多 8 组。只返回 JSON。',
     '只输出 summary 和 modules；每个模块含 id、title、description、riskPoints（字符串数组）。title 简短且唯一。范围写清本模块覆盖的业务规则，区分跨模块规则由谁覆盖。',
     grounding,
-  ].join('\n'), materials, planSchema);
+  ].join('\n'), materials.skills), materials, planSchema);
   const seen = new Set<string>();
   const modules = result.modules.map((item, index) => {
     const title = stripCategory(item.title);
@@ -63,7 +64,7 @@ export async function planTestCaseModules(model: Model, materials: MaterialSnaps
 
 export async function generateModuleTestCases(model: Model, materials: MaterialSnapshot, module: TestCaseModulePlan, modules: TestCaseModulePlan[], observe?: (raw: unknown) => void): Promise<ModuleTestCaseResult> {
   const title = stripCategory(module.title);
-  const result = await structured(model, generationRules + '\n只生成 targetModule 的用例。category 必须等于其标题。其他模块用于理解边界。', {
+  const result = await structured(model, withSkillGuidance(generationRules + '\n只生成 targetModule 的用例。category 必须等于其标题。其他模块用于理解边界。', materials.skills), {
     ...materials, targetModule: { ...module, title }, modules,
   }, casesSchema, observe);
   const cases = checkedCases(result.cases, title).map((item, index) => ({ ...item, id: module.id + '-case-' + (index + 1) }));
