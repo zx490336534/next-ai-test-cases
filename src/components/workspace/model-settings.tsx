@@ -1,5 +1,6 @@
 'use client';
 
+import { standalone, workspaceFetch } from '@/lib/client/runtime';
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -74,7 +75,7 @@ export function ModelSettingsDialog({ settings, onChange }: {
     setDraft({});
     setRemember(false);
     onChange({});
-    setStatus('已清除，使用服务端默认设置。');
+    setStatus(standalone ? '已清除，请重新填写 API Key。' : '已清除，使用服务端默认设置。');
   }
 
   async function testConnection() {
@@ -84,7 +85,7 @@ export function ModelSettingsDialog({ settings, onChange }: {
     setTesting(true);
     setStatus('正在连接模型…');
     try {
-      const response = await fetch('/api/test-case-agent/model-test', {
+      const response = await workspaceFetch('/api/test-case-agent/model-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings: draft }),
@@ -128,7 +129,7 @@ export function ModelSettingsDialog({ settings, onChange }: {
         <form className="space-y-4 p-5" onSubmit={save}>
           <div>
             <h1 id={titleId} className="text-lg font-semibold">模型设置</h1>
-            <p id={detailId} className="mt-1 text-sm text-slate-600">使用 OpenAI 兼容模型。留空的字段沿用服务端配置。</p>
+            <p id={detailId} className="mt-1 text-sm text-slate-600">{standalone ? '填写 API Key。浏览器将直接连接 OpenAI 兼容网关，网关需允许跨域（CORS）请求。' : '使用 OpenAI 兼容模型。留空的字段沿用服务端配置。'}</p>
           </div>
           <label className="block space-y-1 text-sm font-medium">
             <span>模型名</span>

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { once } from 'node:events';
@@ -9,29 +8,9 @@ import { fromBufferPromise, openPromise, type Entry } from 'yauzl';
 import type { TextSkill } from './extensionContracts';
 import { RequestError } from './modelConfig';
 import { groupSkillPaths, isSkillReference, pathInsideSkill } from './skillPaths';
+import { decodeText, loadedSkill, skillName } from './skill-text';
 
 const installedDirectory = 'skills';
-const decoder = new TextDecoder('utf-8', { fatal: true });
-
-function skillName(instructions: string, fallback: string) {
-  const frontMatter = instructions.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  const name = frontMatter?.[1].match(/^name:[ \t]*(.+)$/m)?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
-  return (name?.trim() || fallback).slice(0, 120);
-}
-
-function decodeText(bytes: Uint8Array) {
-  const text = decoder.decode(bytes).trim();
-  if (text.includes('\0')) throw new RequestError('Skill 文件必须是 UTF-8 文本', 422);
-  return text;
-}
-
-function loadedSkill(instructions: string, fallback: string, references: TextSkill['references']): TextSkill {
-  if (!instructions) throw new RequestError('SKILL.md 不能为空', 422);
-  const name = skillName(instructions, fallback);
-  const id = createHash('sha256').update(JSON.stringify({ name, instructions, references })).digest('hex');
-  return { id, name, instructions, references };
-}
-
 export async function importSkillUpload(request: Request, markdown: boolean) {
   if (!request.body) throw new RequestError('请选择 Skill 文件', 400);
   if (markdown) return importSkills(Buffer.from(await request.arrayBuffer()), true);
@@ -48,7 +27,7 @@ export async function importSkillUpload(request: Request, markdown: boolean) {
 export async function importSkills(archive: Buffer | string, markdown = false): Promise<TextSkill[]> {
   try {
     if (markdown && Buffer.isBuffer(archive)) {
-      return [loadedSkill(decodeText(archive), '上传的 Skill', [])];
+      return [await loadedSkill(decodeText(archive), '上传的 Skill', [])];
     }
     const fromDisk = typeof archive === 'string';
     const zip = fromDisk
@@ -83,7 +62,7 @@ export async function importSkills(archive: Buffer | string, markdown = false): 
           const text = await readText(entries.get(path)!);
           if (text) references.push({ path: pathInsideSkill(folder, path), text });
         }
-        skills.push(loadedSkill(instructions, folder ? folder.split('/').at(-1)! : '上传的 Skill', references));
+        skills.push(await loadedSkill(instructions, folder ? folder.split('/').at(-1)! : '上传的 Skill', references));
       }
       return skills;
     } finally {
@@ -138,7 +117,7 @@ export async function resolveSkills(installed: string[] = [], imported: TextSkil
       const text = await readLocalText(path);
       if (text) references.push({ path: relative(dir, path).split(sep).join('/'), text });
     }
-    selected.push(loadedSkill(instructions, id, references));
+    selected.push(await loadedSkill(instructions, id, references));
   }
   return selected;
 }

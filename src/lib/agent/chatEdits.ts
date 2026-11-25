@@ -1,6 +1,5 @@
-import type { MaterialSnapshot } from './materials';
+import type { MaterialSnapshot } from './material-snapshot';
 import { withSkillGuidance } from './extensionContracts';
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { followUpPrompt, groundedFollowUps } from './follow-ups';
 import { caseContentSchema, prioritySchema } from './contracts';
@@ -47,7 +46,7 @@ function findTarget(root: MindMapNode, id: string) {
 }
 
 function makeNode(text: string, tag?: string): MindMapNode {
-  const id = randomUUID();
+  const id = crypto.randomUUID();
   return { data: { id, uid: id, text, ...(tag && { tag: [tag] }) }, children: [] };
 }
 
@@ -68,7 +67,7 @@ export function applyEdits(original: MindMapNode, operations: Edit[]) {
       const preconditionName = edit.precondition.replace(/^!\s*/, '') || '无';
       const precondition = uniqueChild(category, preconditionName, (value) => value.trim()) ?? makeNode(preconditionName, '前置');
       if (!category.children.includes(precondition)) category.children.push(precondition);
-      precondition.children.push(buildCaseNode(validateCaseContent(edit.case), randomUUID()));
+      precondition.children.push(buildCaseNode(validateCaseContent(edit.case), crypto.randomUUID()));
       continue;
     }
 

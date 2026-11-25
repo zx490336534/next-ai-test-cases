@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { RequestError, type resolveModelSettings } from './modelConfig';
+import { RequestError, type ModelConfig } from './modelConfig';
 
 export type ModelUsage = {
   calls: number;
@@ -20,7 +20,7 @@ function tokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function createModel(config: ReturnType<typeof resolveModelSettings>, signal?: AbortSignal): Model {
+export function createModel(config: ModelConfig, signal?: AbortSignal): Model {
   const usage: ModelUsage = { calls: 0, inputTokens: 0, outputTokens: 0, reported: 0 };
   async function invoke(messages: ModelMessage[]) {
     signal?.throwIfAborted();
@@ -35,12 +35,13 @@ export function createModel(config: ReturnType<typeof resolveModelSettings>, sig
         messages,
         ...(!/(^|\/)gpt-[56](?:[.-]|$)/i.test(config.model) && { temperature: 0.2 }),
       }),
+      ...(config.targetAddressSpace && { targetAddressSpace: config.targetAddressSpace }),
       redirect: 'error',
       cache: 'no-store',
       signal: requestSignal,
     }).catch(() => {
       signal?.throwIfAborted();
-      throw new RequestError(timeout.aborted ? '模型请求超时' : '模型网关不可达或拒绝连接', timeout.aborted ? 504 : 502);
+      throw new RequestError(timeout.aborted ? '模型请求超时' : config.connectionError ?? '模型网关不可达或拒绝连接', timeout.aborted ? 504 : 502);
     });
     if (!response.ok) {
       if (response.status === 400 || response.status === 413) {

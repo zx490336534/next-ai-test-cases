@@ -3,7 +3,7 @@ import { followUpPrompt, groundedFollowUps } from './follow-ups';
 import { withSkillGuidance } from './extensionContracts';
 import { casesSchema, planSchema } from './contracts';
 import { buildCategoryNode, buildMindMap, buildSkeleton, stripCategory, validateCaseContent } from './mindMap';
-import type { MaterialSnapshot } from './materials';
+import type { MaterialSnapshot } from './material-snapshot';
 import { structured, type Model } from './model';
 import { RequestError } from './modelConfig';
 import type { ModuleTestCaseResult, TestCaseAgentResult, TestCaseItem, TestCaseModulePlan, TestCasePlanResult } from './types';

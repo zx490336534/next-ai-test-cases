@@ -1,3 +1,4 @@
+import { workspaceFetch } from '@/lib/client/runtime';
 import type { TextSkill } from '@/lib/agent/extensionContracts';
 import { groupSkillPaths, isSkillManifest, pathInsideSkill } from '@/lib/agent/skillPaths';
 
@@ -43,7 +44,7 @@ async function directoryArchive(task: Extract<Upload, { kind: 'directory' }>) {
 async function uploadSkill(task: Upload) {
   const markdown = task.kind === 'file' && /\.md$/i.test(task.file.name);
   const body = task.kind === 'file' ? task.file : await directoryArchive(task);
-  const response = await fetch('/api/test-case-agent/extensions', {
+  const response = await workspaceFetch('/api/test-case-agent/extensions', {
     method: 'POST',
     headers: { 'Content-Type': markdown ? 'text/markdown' : 'application/zip' },
     body,

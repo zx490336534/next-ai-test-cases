@@ -35,6 +35,7 @@ import { SessionHistory } from '@/components/workspace/session-history';
 import { WorkspacePanels } from '@/components/workspace/workspace-panels';
 import { sessionRequest } from '@/components/workspace/session-client';
 import { useSessionSave } from '@/components/workspace/use-session-save';
+import { standalone } from '@/lib/client/runtime';
 import { normalizeMindMap } from '@/lib/agent/mindMap';
 import type { Extensions, TextSkill } from '@/lib/agent/extensionContracts';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
@@ -275,7 +276,7 @@ function Workspace({
         <CardHeader className="border-b border-[#e7eeec] px-3 py-2.5 sm:px-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-[#183637]"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#e4f3ee] text-[#14685f]"><Workflow aria-hidden="true" className="h-4 w-4" /></span>测试用例脑图</CardTitle>
+              <CardTitle className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-[#183637]"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#e4f3ee] text-[#14685f]"><Workflow aria-hidden="true" className="h-4 w-4" /></span>测试用例脑图{standalone && <span className="text-xs font-normal text-slate-600">单文件版</span>}</CardTitle>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <Button
@@ -446,7 +447,7 @@ function Workspace({
                     <div className="flex flex-col gap-2.5">
                       {messageList.length === 0 ? (
                         <div className="rounded-lg border border-dashed bg-white p-3 text-sm leading-6 text-slate-500">
-                          输入需求正文、业务规则或资料链接，生成第一版测试用例。
+                          {standalone ? '粘贴需求正文或业务规则，生成第一版测试用例。' : '输入需求正文、业务规则或资料链接，生成第一版测试用例。'}
                         </div>
                       ) : (
                         messageList.map((message) => (

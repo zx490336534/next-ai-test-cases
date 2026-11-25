@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FollowUp } from './follow-ups';
 import { moduleSchema } from './contracts';
 import { buildSkeleton } from './mindMap';
-import { materialDigest, type MaterialSnapshot } from './materials';
+import { materialDigest, type MaterialSnapshot } from './material-snapshot';
 import { modelError, type Model } from './model';
 import { RequestError } from './modelConfig';
 import { generateModuleTestCases, generateTestCases, planTestCaseModules } from './testCaseAgent';
@@ -59,7 +59,7 @@ export async function runGeneration(input: {
     return;
   }
 
-  const sourceHash = materialDigest(materials);
+  const sourceHash = await materialDigest(materials);
   if (retry && retry.sourceHash !== sourceHash) {
     throw new RequestError('需求资料已变化，请重新发起生成。已完成的脑图仍保留。', 409);
   }

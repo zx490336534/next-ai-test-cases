@@ -6,7 +6,16 @@ export const modelSettingsSchema = z.object({
   apiKey: z.string().trim().max(2048).regex(/^[\x21-\x7e]*$/).optional(),
 });
 export type ModelSettings = z.infer<typeof modelSettingsSchema>;
-const openAiUrl = 'https://api.openai.com/v1';
+export const openAiUrl = 'https://api.openai.com/v1';
+
+export const defaultModel = 'gpt-4.1-mini';
+export type ModelConfig = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  connectionError?: string;
+  targetAddressSpace?: 'loopback';
+};
 
 export class RequestError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -18,7 +27,7 @@ export function isLocalMode() {
   return process.env.TEST_CASES_LOOPBACK === '1';
 }
 
-function canonicalUrl(value: string) {
+export function canonicalUrl(value: string) {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
@@ -43,7 +52,7 @@ export function checkRequestOrigin(request: Request) {
   }
 }
 
-export function resolveModelSettings(overrides: ModelSettings = {}) {
+export function resolveModelSettings(overrides: ModelSettings = {}): ModelConfig {
   const serverUrl = canonicalUrl(process.env.OPENAI_BASE_URL?.trim() || openAiUrl);
   const baseUrl = overrides.baseUrl ? canonicalUrl(overrides.baseUrl) : serverUrl;
   if (!isLocalMode() && overrides.baseUrl && baseUrl !== serverUrl && baseUrl !== openAiUrl) {
@@ -57,13 +66,17 @@ export function resolveModelSettings(overrides: ModelSettings = {}) {
   }
   const apiKey = overrides.apiKey || (baseUrl === serverUrl ? process.env.OPENAI_API_KEY : undefined);
   if (!apiKey) throw new RequestError('请在模型设置中输入 API Key，或配置本地 OPENAI_API_KEY', 400);
-  return { baseUrl, apiKey, model: overrides.model || process.env.OPENAI_MODEL || 'gpt-4.1-mini' };
+  return { baseUrl, apiKey, model: overrides.model || process.env.OPENAI_MODEL || defaultModel };
 }
 
 export const modelRequestSchema = z.object({ settings: modelSettingsSchema.optional() });
 
 export async function parseRequest<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   checkRequestOrigin(request);
+  return parseJson(request, schema);
+}
+
+export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   const raw: unknown = await request.json().catch(() => null);
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new RequestError('请求参数不合法', 400);

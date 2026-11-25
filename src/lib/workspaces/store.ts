@@ -2,16 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { conversationText } from '@/lib/agent/conversation';
+import { titleFor } from './title';
 import { EMPTY_MAP } from '@/lib/agent/mindMap';
 import { RequestError } from '@/lib/agent/modelConfig';
 import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from './types';
-
-function titleFor(snapshot: WorkspaceSnapshot) {
-  const first = snapshot.messages.find(({ role }) => role === 'user');
-  const text = first ? conversationText(first).replace(/\s+/g, ' ') : '';
-  return Array.from(text).slice(0, 42).join('') || '新会话';
-}
 
 export function openWorkspaceStore(path: string) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

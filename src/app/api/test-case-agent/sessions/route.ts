@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { reorderSchema } from '@/lib/workspaces/validation';
 import { errorResponse, parseRequest } from '@/lib/agent/modelConfig';
 import { workspaceOwner, workspaceReply } from '@/lib/workspaces/http';
 import { workspaceStore } from '@/lib/workspaces/store';
@@ -25,7 +25,6 @@ export async function POST(request: Request) {
   }
 }
 
-const reorderSchema = z.object({ id: z.uuid(), targetId: z.uuid(), placement: z.enum(['before', 'after']) });
 
 export async function PATCH(request: Request) {
   try {

@@ -9,7 +9,8 @@ import { showSuggestedPrompts } from '../src/components/workspace/chat-support';
 import { POST as exportXmind } from '../src/app/api/test-case-agent/export-xmind/route';
 import { applyEdits, chatAndUpdateMindMap } from '../src/lib/agent/chatEdits';
 import { buildMindMap, EMPTY_MAP, normalizeMindMap, readMindMap, toCsv, validateCaseContent } from '../src/lib/agent/mindMap';
-import { collectMaterials, materialDigest } from '../src/lib/agent/materials';
+import { materialDigest } from '../src/lib/agent/material-snapshot';
+import { collectMaterials } from '../src/lib/agent/materials';
 import { createModel, type Model } from '../src/lib/agent/model';
 import { checkRequestOrigin, resolveModelSettings } from '../src/lib/agent/modelConfig';
 import { runGeneration, type GenerationEvent } from '../src/lib/agent/generation';
@@ -93,7 +94,7 @@ test('keeps successful modules, retries only failed modules, and rejects changed
   await runGeneration({ ...input, retry });
   assert.deepEqual(seen, ['支付']);
   await assert.rejects(runGeneration({ ...input, retry, materials: { ...snapshot, missing: 1 } }), /资料已变化/);
-  assert.equal(plan.sourceHash, materialDigest(snapshot));
+  assert.equal(plan.sourceHash, await materialDigest(snapshot));
 });
 
 test('cancellation in the first module stops the rest of a serial run', async () => {

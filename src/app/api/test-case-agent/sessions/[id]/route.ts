@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { renameSchema } from '@/lib/workspaces/validation';
 import { errorResponse, parseRequest } from '@/lib/agent/modelConfig';
 import { parseWorkspaceSave, workspaceOwner, workspaceReply } from '@/lib/workspaces/http';
 import { workspaceStore } from '@/lib/workspaces/store';
@@ -28,7 +28,6 @@ export async function PUT(request: Request, context: Context) {
   }
 }
 
-const renameSchema = z.object({ title: z.string().trim().min(1).max(120) });
 
 export async function PATCH(request: Request, context: Context) {
   try {

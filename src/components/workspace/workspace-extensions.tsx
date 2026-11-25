@@ -1,5 +1,6 @@
 'use client';
 
+import { standalone, workspaceFetch } from '@/lib/client/runtime';
 import { useId, useRef, useState, type ChangeEvent } from 'react';
 import { Blocks, BookOpen, FileUp, FolderUp, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -34,7 +35,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
     setCatalog(null);
     setCatalogError('');
     try {
-      const response = await fetch('/api/test-case-agent/extensions', { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+      const response = await workspaceFetch('/api/test-case-agent/extensions', { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
       if (!response.ok) throw new Error();
       setCatalog(await response.json() as ExtensionCatalog);
     } catch {
@@ -81,7 +82,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
     <>
       <Button type="button" variant="outline" size="sm" className="mr-auto gap-1.5" onClick={open} disabled={disabled}>
         <Blocks aria-hidden="true" className="h-4 w-4" />
-        MCP 与 Skill
+        {standalone ? 'Skill' : 'MCP 与 Skill'}
         {activeCount ? <span className="text-xs text-primary">{activeCount} 个 Skill</span> : null}
       </Button>
       <dialog ref={dialog} aria-labelledby={title} onCancel={(event) => { if (importing) event.preventDefault(); }}
@@ -89,16 +90,16 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
         <div className="space-y-5 p-5">
           <header className="flex items-start justify-between gap-4">
             <div>
-              <h1 id={title} className="text-lg font-semibold">MCP 与 Skill</h1>
-              <p className="mt-1 text-sm text-slate-600">所选扩展用于当前页面的生成和对话修改。</p>
+              <h1 id={title} className="text-lg font-semibold">{standalone ? 'Skill' : 'MCP 与 Skill'}</h1>
+              <p className="mt-1 text-sm text-slate-600">{standalone ? '导入和解压在浏览器内完成。启用的 Skill 会随生成和修改请求发给所选模型。' : '所选扩展用于当前页面的生成和对话修改。'}</p>
             </div>
-            <button type="button" aria-label="关闭扩展" disabled={importing} onClick={() => dialog.current?.close()}
+            <button type="button" aria-label={standalone ? '关闭 Skill' : '关闭扩展'} disabled={importing} onClick={() => dialog.current?.close()}
               className="rounded-md p-1.5 text-slate-600 hover:bg-muted disabled:opacity-50">
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </header>
 
-          <fieldset disabled={importing} className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
+          {!standalone && <fieldset disabled={importing} className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
             <legend className="px-1 text-sm font-semibold">资料读取 · MCP</legend>
             <p className="text-xs text-slate-600">粘贴资料链接时，从已选的服务匹配可用来源。</p>
             {catalogError ? <p role="alert" className="text-xs text-red-700">{catalogError}</p> : !catalog ? (
@@ -120,11 +121,11 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
                 </div>
               </>
             ) : <p className="text-xs text-slate-500">服务端暂未挂载 MCP。</p>}
-          </fieldset>
+          </fieldset>}
 
           <fieldset className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
             <legend className="px-1 text-sm font-semibold">测试规范 · Skill</legend>
-            <p className="text-xs text-slate-600">选择已安装的 Skill，或导入文件和文件夹。文件夹中可混放解压后的 Skill 和 ZIP、.skill 压缩包。</p>
+            <p className="text-xs text-slate-600">{standalone ? '导入 Skill 文件或文件夹。' : '选择已安装的 Skill，或导入文件和文件夹。'}文件夹中可混放解压后的 Skill 和 ZIP、.skill 压缩包。</p>
             <div className="flex flex-wrap gap-1.5">
               <Button type="button" size="sm" variant="outline" disabled={importing || !mounted.length && !library.length}
                 onClick={() => onChange({ ...value, installedSkillIds: catalog ? mounted.map(({ id }) => id) : installed, importedSkills: library })}>全选</Button>

@@ -2,6 +2,27 @@
 
 把需求转成可手工执行的测试用例，直接在脑图中编辑，再导出 CSV 或 XMind。支持用对话增删用例、改名、调整优先级或修改步骤与预期。两种导出都读取当前脑图。桌面工作区分为历史对话、脑图和 AI 对话三栏，可拖动两侧分隔条调整宽度。历史和对话可独立折叠，展开按钮保留在对应窄栏的顶部。
 
+## 选择版本
+
+| 版本 | 启动方式 | 会话历史 | 资料与模型 |
+| --- | --- | --- | --- |
+| 单文件版 | 下载一个 HTML 文件，用浏览器打开 | 当前浏览器的 IndexedDB | 粘贴需求正文，从浏览器导入 Skill，直连允许跨域的模型网关 |
+| 完整版 | 安装依赖后运行 `pnpm dev`，或构建后运行 `pnpm start` | SQLite | 支持 MCP 读文档、部署者安装的 Skill 和服务端模型配置 |
+
+两版都支持 AI 生成和修改用例、手工编辑脑图、管理会话，以及导出 CSV 和 XMind。
+
+### 单文件版
+
+1. 从 [GitHub Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载 `next-ai-test-cases.html`，用新版 Chrome 或 Edge 打开。
+2. 点「模型设置」，填写模型网关的 API Key。模型名和 Base URL 留空时分别使用 `gpt-4.1-mini` 和 `https://api.openai.com/v1`。点「测试连接」后保存。
+3. 在 AI 对话里粘贴需求正文或业务规则。点「Skill」可导入 Markdown、ZIP、`.skill` 或包含多个 Skill 的文件夹。
+
+页面和导出功能可以离线使用，AI 生成和修改需要联网访问模型网关。网关需通过 CORS 允许页面来源，以及 `Authorization` 和 `Content-Type` 请求头。本地文件的来源通常为 `null`，静态站点使用站点的 HTTPS 来源。连接本机回环网关时，浏览器可能会请求本机网络权限。连接受限时可用完整版通过服务端连接。
+
+历史和脑图保存在浏览器的 IndexedDB，和完整版的 SQLite 各自保存。清理浏览器数据会删除本地历史。浏览器可能按文件路径划分存储，更新文件时建议覆盖原路径并沿用同一浏览器配置。API Key 默认只在当前页面使用，可主动勾选记住。
+
+在源码目录执行 `pnpm install --frozen-lockfile` 和 `pnpm build:html`，产物为 `dist/next-ai-test-cases.html`。也可以将该文件命名为 `index.html` 放到 GitHub Pages 等 HTTPS 静态站点。
+
 ## 界面
 
 | 三栏工作区 | 折叠两侧，只看脑图 |
@@ -20,9 +41,9 @@
 | --- | --- |
 | ![生成期间的进度和停止按钮](doc/img/generating.jpg) | ![配置模型名、Base URL 和 API Key](doc/img/model-settings.jpg) |
 
-截图来自独立的演示环境，使用虚构的团队邀请需求、文档和 Skill。
+截图展示完整版，来自独立的演示环境，使用虚构的团队邀请需求、文档和 Skill。
 
-## 快速开始
+## 完整版快速开始
 
 需要 Node.js 22.13 或更新版本和 pnpm。
 
@@ -65,7 +86,7 @@ pnpm start:local -p 3000
 
 在右侧对话栏点「新建会话」可开始独立的对话和脑图。左侧历史支持打开、拖拽排序、重命名和确认删除，悬停标题可看全文。删除当前会话后会打开相邻会话，若无其他会话则新建空会话。消息和脑图会自动保存，刷新时恢复当前标签页最后打开的会话。
 
-会话排序和自定义名称也会保留。历史存放在 SQLite 文件 `.data/conversations.sqlite`，可用环境变量 `TEST_CASES_DB_PATH` 指定其他路径。应用按浏览器 Cookie 识别历史，清除站点 Cookie 或换用浏览器会使用新的历史空间。模型密钥、当前页的 MCP 和 Skill 选择由各自的设置流程管理。
+会话排序和自定义名称也会保留。完整版的历史存放在 SQLite 文件 `.data/conversations.sqlite`，可用环境变量 `TEST_CASES_DB_PATH` 指定其他路径。应用按浏览器 Cookie 识别历史，清除站点 Cookie 或换用浏览器会使用新的历史空间。模型密钥、当前页的 MCP 和 Skill 选择由各自的设置流程管理。
 
 ## 用例、资料和导出
 
@@ -75,7 +96,7 @@ pnpm start:local -p 3000
 - 脑图按「类别 → 前置条件 → 用例 → 测试步骤 → 期望结果」组织。每条步骤各占一个节点，对应的期望结果作为它的子节点，两者都直接显示编号和正文。可执行用例才会计入生成结果。信息不足时在摘要里说明缺口。
 - CSV 包含用例名、优先级、前置条件、步骤和预期。XMind 保留脑图层级，使用 `P0` 到 `P3` 对应的 `priority-1` 到 `priority-4` 标记。
 
-### MCP 与 Skill
+### 完整版的 MCP 与 Skill
 
 在对话输入框下方打开「MCP 与 Skill」。已启用的文字规范和资料会随生成或修改请求交给所选模型。导入和启用状态保留在当前页面，切换会话时仍可使用。
 
@@ -95,4 +116,5 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm build:html
 ~~~

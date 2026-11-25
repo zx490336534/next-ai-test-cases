@@ -1,5 +1,6 @@
 'use client';
 
+import { workspaceFetch } from '@/lib/client/runtime';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -49,6 +50,7 @@ export function useCaseWorkspace(
 
   const transport = useMemo(() => new DefaultChatTransport<ConversationMessage>({
     api: '/api/test-case-agent/conversation',
+    fetch: workspaceFetch,
     prepareSendMessagesRequest({ body, messages }) {
       const transcript = messages.filter(({ role }) => role !== 'system')
         .map((message) => ({ role: message.role, content: conversationText(message) }))
@@ -175,7 +177,7 @@ export function useCaseWorkspace(
     if (!readMindMap(mapRef.current).cases.length) { setError('当前脑图里没有可导出的用例'); return; }
     setExporting(true);
     try {
-      const result = await fetch('/api/test-case-agent/export-xmind', {
+      const result = await workspaceFetch('/api/test-case-agent/export-xmind', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mindMap: mapRef.current }),
       });
       if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? 'XMind 导出失败');

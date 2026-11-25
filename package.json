@@ -1,10 +1,11 @@
 {
   "name": "next-ai-test-cases",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:html": "node scripts/build-html.mjs",
     "start": "next start",
     "lint": "eslint .",
     "dev:local": "node scripts/local.mjs dev",
@@ -41,6 +42,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/yauzl": "3.4.0",
+    "esbuild": "0.28.2",
     "eslint": "^10.15.0",
     "eslint-config-next": "16.4.6",
     "postcss": "^8.5.33",
