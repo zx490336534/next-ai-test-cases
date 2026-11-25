@@ -189,6 +189,33 @@ test('does not follow model redirects and never reflects upstream error details'
   await assert.rejects(createModel({ baseUrl: host, model: 'demo', apiKey: 'unit-test-key' }).invoke(messages), /^Error: 模型网关拒绝认证/);
 });
 
+test('uses Zhipu Responses, reads only assistant output, and classifies HTTP 200 auth errors', async (t) => {
+  const baseUrl = 'https://open.bigmodel.cn/api/v1';
+  const model = createModel({ baseUrl, model: 'glm-5.3', apiKey: 'unit-test-key' });
+  const messages = [{ role: 'system' as const, content: 'Keep the instructions' }, { role: 'user' as const, content: 'Reply OK' }];
+  let mockReply: unknown = {
+    status: 'completed',
+    usage: { input_tokens: 14, output_tokens: 2 },
+    output: [
+      { type: 'reasoning', content: [{ type: 'output_text', text: 'skip reasoning' }] },
+      { type: 'message', role: 'assistant', content: { type: 'output_text', text: 'O' } },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'K' }] },
+    ],
+  };
+  t.mock.method(globalThis, 'fetch', async (target: string, init: RequestInit) => {
+    assert.equal(target, baseUrl + '/responses');
+    assert.equal(init.redirect, 'error');
+    assert.deepEqual(JSON.parse(String(init.body)), {
+      model: 'glm-5.3', input: messages.map((message) => ({ type: 'message', ...message })), store: false, stream: false,
+    });
+    return Response.json(mockReply);
+  });
+  assert.equal(await model.invoke(messages), 'OK');
+  assert.deepEqual(model.usage, { calls: 1, inputTokens: 14, outputTokens: 2, totalTokens: 16, reported: 1, detailed: 1 });
+  mockReply = { success: false, code: 401, msg: 'raw upstream auth error contains a secret' };
+  await assert.rejects(model.invoke(messages), /^Error: 模型网关拒绝认证/);
+});
+
 test('reads each approved MCP document once and never calls the gateway for unapproved origins', async (t) => {
   const original = process.cwd();
   const state = await mkdtemp(join(tmpdir(), 'test-cases-mcp-'));

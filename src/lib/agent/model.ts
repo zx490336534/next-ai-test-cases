@@ -16,25 +16,43 @@ export type Model = {
 };
 export const modelError = (error: unknown) => error instanceof RequestError ? error.message : '处理失败，请稍后重试';
 
+const zhipuResponsesUrl = 'https://open.bigmodel.cn/api/v1';
+
+function responsesText(output: { type?: string; role?: string; content?: unknown }[] | undefined) {
+  if (!Array.isArray(output)) return '';
+  return output.flatMap((item) => {
+    if (item?.type !== 'message' || item.role !== 'assistant') return [];
+    const parts = Array.isArray(item.content) ? item.content : [item.content];
+    return parts.flatMap((part) => part?.type === 'output_text' && typeof part.text === 'string' ? [part.text] : []);
+  }).join('');
+}
+
 function tokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 export function createModel(config: ModelConfig, signal?: AbortSignal): Model {
+  const useResponses = config.baseUrl === zhipuResponsesUrl;
   const usage: ModelUsage = { calls: 0, inputTokens: 0, outputTokens: 0, reported: 0 };
   async function invoke(messages: ModelMessage[]) {
     signal?.throwIfAborted();
     const timeout = AbortSignal.timeout(180_000);
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
     usage.calls++;
-    const response = await fetch(config.baseUrl + '/chat/completions', {
+    const body = useResponses ? {
+      model: config.model,
+      input: messages.map((message) => ({ type: 'message', ...message })),
+      store: false,
+      stream: false,
+    } : {
+      model: config.model,
+      messages,
+      ...(!/(^|\/)gpt-[56](?:[.-]|$)/i.test(config.model) && { temperature: 0.2 }),
+    };
+    const response = await fetch(config.baseUrl + (useResponses ? '/responses' : '/chat/completions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        ...(!/(^|\/)gpt-[56](?:[.-]|$)/i.test(config.model) && { temperature: 0.2 }),
-      }),
+      body: JSON.stringify(body),
       ...(config.targetAddressSpace && { targetAddressSpace: config.targetAddressSpace }),
       redirect: 'error',
       cache: 'no-store',
@@ -58,9 +76,17 @@ export function createModel(config: ModelConfig, signal?: AbortSignal): Model {
       throw new RequestError('模型网关返回错误（HTTP ' + response.status + '）', 502);
     }
     const payload = await response.json().catch(() => null);
+    // The gateway can return business errors inside an HTTP 200 response.
+    if (useResponses && payload?.success === false) {
+      const code = String(payload.code);
+      if (code === '401' || code === '1001') {
+        throw new RequestError('模型网关拒绝认证，请核对 Key 和模型权限', 401);
+      }
+      throw new RequestError('智谱网关拒绝请求，请核对标准 API 权限、模型和可用额度', 502);
+    }
     const count = payload?.usage;
-    const inputTokens = tokenCount(count?.prompt_tokens);
-    const outputTokens = tokenCount(count?.completion_tokens);
+    const inputTokens = tokenCount(useResponses ? count?.input_tokens : count?.prompt_tokens);
+    const outputTokens = tokenCount(useResponses ? count?.output_tokens : count?.completion_tokens);
     const hasBreakdown = inputTokens !== undefined && outputTokens !== undefined;
     const total = tokenCount(count?.total_tokens) ?? (hasBreakdown ? inputTokens + outputTokens : undefined);
     if (total !== undefined) {
@@ -72,7 +98,10 @@ export function createModel(config: ModelConfig, signal?: AbortSignal): Model {
       usage.inputTokens += inputTokens;
       usage.outputTokens += outputTokens;
     }
-    const text: unknown = payload?.choices?.[0]?.message?.content;
+    if (useResponses && ['failed', 'incomplete', 'cancelled'].includes(payload?.status)) {
+      throw new RequestError('模型未完成本次响应，请重试', 502);
+    }
+    const text: unknown = useResponses ? responsesText(payload?.output) : payload?.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) throw new RequestError('模型未返回文本结果', 502);
     return text.trim();
   }

@@ -23,6 +23,10 @@
 
 在源码目录执行 `pnpm install --frozen-lockfile` 和 `pnpm build:html`，产物为 `dist/next-ai-test-cases.html`。也可以将该文件命名为 `index.html` 放到 GitHub Pages 等 HTTPS 静态站点。
 
+#### 双击 HTML 连接智谱
+
+在「模型设置」填入 Base URL `https://open.bigmodel.cn/api/v1`、模型名（例如 `glm-5.3`）和有标准 API 权限的智谱 Key。此地址自动使用智谱的 Responses 接口，可从本地 HTML 直连。标准 API 的额度与 Coding Plan 各自管理，Coding Plan 专用 Key 用于智谱支持的指定工具。 [智谱 Responses 文档](https://docs.bigmodel.cn/cn/guide/develop/responses/introduction) · [Key 类型说明](https://docs.bigmodel.cn/cn/coding-plan/notice/api-key-management)
+
 #### 连接 Magpie 等本机网关
 
 使用 Node.js 22.13 或更新版本。从 [Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载同一版本的 `next-ai-test-cases.html` 和 `serve-html.mjs`，放在同一目录后运行：
