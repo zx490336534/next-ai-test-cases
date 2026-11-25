@@ -35,6 +35,7 @@ const html = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
+  <meta name="local-model-gateway" content="">
   <title>AI 测试用例助手 · 单文件版</title>
   <style>${[styles.css, canvasCss].join('\n').replace(/<\/style/gi, '<\\/style')}</style>
 </head>

@@ -17,11 +17,23 @@
 2. 点「模型设置」，填写模型网关的 API Key。模型名和 Base URL 留空时分别使用 `gpt-4.1-mini` 和 `https://api.openai.com/v1`。点「测试连接」后保存。
 3. 在 AI 对话里粘贴需求正文或业务规则。点「Skill」可导入 Markdown、ZIP、`.skill` 或包含多个 Skill 的文件夹。
 
-页面和导出功能可以离线使用，AI 生成和修改需要联网访问模型网关。网关需通过 CORS 允许页面来源，以及 `Authorization` 和 `Content-Type` 请求头。本地文件的来源通常为 `null`，静态站点使用站点的 HTTPS 来源。连接本机回环网关时，浏览器可能会请求本机网络权限。连接受限时可用完整版通过服务端连接。
+页面和导出功能可以离线使用，AI 生成和修改需要联网访问模型网关。网关需通过 CORS 允许页面来源，以及 `Authorization` 和 `Content-Type` 请求头。本地文件的来源通常为 `null`，静态站点使用站点的 HTTPS 来源。连接本机回环网关时，浏览器可能会请求本机网络权限。本机网关拒绝跨域时，按下面的方式使用本机启动器。
 
 历史和脑图保存在浏览器的 IndexedDB，和完整版的 SQLite 各自保存。清理浏览器数据会删除本地历史。浏览器可能按文件路径划分存储，更新文件时建议覆盖原路径并沿用同一浏览器配置。API Key 默认只在当前页面使用，可主动勾选记住。
 
 在源码目录执行 `pnpm install --frozen-lockfile` 和 `pnpm build:html`，产物为 `dist/next-ai-test-cases.html`。也可以将该文件命名为 `index.html` 放到 GitHub Pages 等 HTTPS 静态站点。
+
+#### 连接 Magpie 等本机网关
+
+使用 Node.js 22.13 或更新版本。从 [Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载同一版本的 `next-ai-test-cases.html` 和 `serve-html.mjs`，放在同一目录后运行：
+
+~~~bash
+node serve-html.mjs --gateway http://127.0.0.1:3425
+~~~
+
+随后打开 [http://127.0.0.1:3025](http://127.0.0.1:3025)，在「模型设置」中输入 Magpie 的模型名、Base URL `http://127.0.0.1:3425` 和网关 Key，测试连接后保存。启动器仅监听回环地址，模型请求只转发到启动时指定的网关。网关地址不带路径时使用 `/v1`。端口冲突时可用 `--port` 指定其他端口。
+
+启动器打开的仍是单文件版，历史保存在浏览器中。浏览器按来源保存数据，双击打开的文件与启动器地址各有自己的历史。在源码目录也可以先运行 `pnpm build:html`，再执行 `pnpm start:html --gateway http://127.0.0.1:3425`。
 
 ## 界面
 

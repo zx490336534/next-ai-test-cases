@@ -129,7 +129,7 @@ export function ModelSettingsDialog({ settings, onChange }: {
         <form className="space-y-4 p-5" onSubmit={save}>
           <div>
             <h1 id={titleId} className="text-lg font-semibold">模型设置</h1>
-            <p id={detailId} className="mt-1 text-sm text-slate-600">{standalone ? '填写 API Key。浏览器将直接连接 OpenAI 兼容网关，网关需允许跨域（CORS）请求。' : '使用 OpenAI 兼容模型。留空的字段沿用服务端配置。'}</p>
+            <p id={detailId} className="mt-1 text-sm text-slate-600">{standalone ? '填写 API Key。直接打开 HTML 时，模型网关需允许跨域（CORS）。本机网关也可通过 Release 附带的启动器连接。' : '使用 OpenAI 兼容模型。留空的字段沿用服务端配置。'}</p>
           </div>
           <label className="block space-y-1 text-sm font-medium">
             <span>模型名</span>

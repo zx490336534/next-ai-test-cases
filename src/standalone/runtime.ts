@@ -15,10 +15,20 @@ function modelConfig({ baseUrl, model, apiKey }: ModelSettings = {}): ModelConfi
     throw new RequestError('请输入 HTTPS 网关地址。本机回环网关可使用 HTTP。', 400);
   }
   if (!apiKey) throw new RequestError('请在模型设置中填写 API Key', 400);
+  const configuredGateway = document.querySelector<HTMLMetaElement>('meta[name="local-model-gateway"]')?.content;
+  const local = location.protocol === 'http:' && location.hostname === '127.0.0.1' && configuredGateway;
+  if (local && (target === local || (!new URL(local).pathname.slice(1) && target === local + '/v1'))) {
+    return {
+      baseUrl: location.origin + '/v1', model: model || defaultModel, apiKey,
+      connectionError: '本机启动器连接已断开，请检查启动器是否仍在运行。',
+    };
+  }
   return {
     baseUrl: target, model: model || defaultModel, apiKey,
     ...(url.protocol === 'http:' && { targetAddressSpace: 'loopback' as const }),
-    connectionError: '浏览器无法连接模型网关，请检查网络、网关的跨域（CORS）设置和浏览器的本机网络权限。',
+    connectionError: url.protocol === 'http:'
+      ? '浏览器无法直连本机网关。若网关不支持跨域请求，请使用 Release 附带的本机启动器。'
+      : '浏览器无法连接模型网关，请检查网络和网关的跨域（CORS）设置。',
   };
 }
 
