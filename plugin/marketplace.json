@@ -1,0 +1,12 @@
+{
+  "name": "next-ai-test-cases",
+  "interface": { "displayName": "next-ai-test-cases" },
+  "plugins": [
+    {
+      "name": "test-case-workbench",
+      "source": { "source": "local", "path": "./plugin/codex-test-cases" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

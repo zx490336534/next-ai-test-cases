@@ -1,11 +1,12 @@
 {
   "name": "next-ai-test-cases",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "build:html": "node scripts/build-html.mjs",
+    "build:codex": "node scripts/build-codex-plugin.mjs",
     "start": "next start",
     "start:html": "node scripts/serve-html.mjs --file dist/next-ai-test-cases.html",
     "lint": "eslint .",
@@ -38,6 +39,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",

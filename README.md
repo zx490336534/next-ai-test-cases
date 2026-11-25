@@ -127,6 +127,56 @@ pnpm start:local -p 3000
 
 原有的 `/api/test-case-agent`、`/plan`、`/module`、`/chat` 和 `/export-xmind` 入口继续可用。对话使用 `/api/test-case-agent/conversation` 的 AI SDK 消息流。会话历史和操作由 `/api/test-case-agent/sessions` 管理。
 
+## Codex 插件
+
+插件把测试用例、需求、项目上下文和每次执行的证据保存在同一个本地工作区。用例由会话中的 Codex 生成和执行。使用 Codex 已配置的模型，插件不需要单独的模型 Key。
+
+### 安装
+
+需要能运行本地插件的 Codex 和 Node.js 22.13 或更新版本。添加 GitHub 插件源后安装：
+
+~~~bash
+codex plugin marketplace add zx490336534/next-ai-test-cases --ref codex/plugin-marketplace
+codex plugin add test-case-workbench@next-ai-test-cases
+~~~
+
+也可从 [GitHub Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载 `codex-test-cases.zip`，解压后安装：
+
+~~~bash
+unzip codex-test-cases.zip -d codex-test-cases
+codex plugin marketplace add ./codex-test-cases
+codex plugin add test-case-workbench@next-ai-test-cases
+~~~
+
+这两种方式都安装到 Codex 的本地插件目录。因为插件使用本地 MCP 服务，进入 OpenAI 公共目录需要提交组织获批。 [桌面插件上架说明](https://developers.openai.com/plugins/deploy/desktop-only)
+
+在 Codex 本地聊天里提及「测试用例工作区」插件，或调用 `$test-case-workbench`。桌面端的脑图卡片需要客户端支持 MCP Apps。如果工具已加载但卡片没出现，可以在支持该功能开关的版本中运行 `codex features enable enable_mcp_apps`，随后重启客户端。仅支持聊天工具的客户端仍可在聊天里完整操作用例与执行批次。 [Codex 插件安装文档](https://developers.openai.com/plugins/build/plugins)
+
+### 使用
+
+- 生成。对 Codex 说「根据以下需求生成可手工执行的用例，保存并打开脑图」。可以同一轮提供测试仓库、测试环境、账号类型与已知限制。需求和这些上下文会随工作区保存。
+- 修改。可以对 Codex 说「把撤销邀请用例改成 P0，保留其余用例」，或在卡片的用例列表打开「编辑用例」，保存后立即更新脑图。并行修改时按版本检查冲突。
+- 执行。在卡片勾选用例，点「交给 Codex 执行」。可在卡片填写测试目标，也可沿用聊天已给出的目标。客户端无法代发时，卡片会给出可粘贴到聊天的指令。也可以在聊天直接指定用例和环境。Codex 以当前会话可用且获授权的工具执行，记录实际观察、通过、失败或阻塞，并显示最近批次。
+- 续做。新会话可以按工作区标题恢复需求和用例，旧批次可按执行 ID 继续。每个批次保存执行目标和选中用例当时的版本，后来编辑用例不会改写旧证据。
+
+默认数据位置为 `~/.codex/test-case-workbench/library.sqlite`。Web 版的会话仍使用各自的存储。
+
+### 脑图、编辑与执行记录
+
+这些界面截图使用合成的团队邀请用例。
+
+| 脑图与所选用例 |
+| --- |
+| ![工作区脑图、用例复选框和交给 Codex 执行按钮](doc/img/codex-case-workbench.png) |
+
+| 人工编辑用例 | 查看执行证据 |
+| --- | --- |
+| ![修改标题、优先级、测试步骤和预期结果](doc/img/codex-case-editor.png) | ![执行批次的用例版本、环境、结论与观察证据](doc/img/codex-case-run.png) |
+
+### 从源码打包
+
+安装依赖后执行 `pnpm build:codex`。生成 `dist/codex-test-cases.zip` 和已解包目录 `dist/codex-test-cases/`。也可把已解包目录直接传给 `codex plugin marketplace add`。安装包包含本地 MCP 服务与脑图资源，安装后无需启动 Next.js。
+
 ## 验证
 
 ~~~bash
@@ -135,4 +185,5 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm build:html
+pnpm build:codex
 ~~~

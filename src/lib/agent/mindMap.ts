@@ -112,7 +112,7 @@ export function buildCaseNode(item: Pick<TestCaseItem, 'topic' | 'priority' | 's
   return node(item.topic, id, children, { priority: item.priority, tag: [item.priority] });
 }
 
-export function buildCategoryNode(title: string, id: string, cases: TestCaseItem[] = []) {
+export function buildCategoryNode(title: string, id: string, cases: TestCaseItem[] = [], caseId?: (item: TestCaseItem) => string) {
   const groups = new Map<string, TestCaseItem[]>();
   for (const item of cases) {
     const name = item.precondition.trim().replace(/^!\s*/, '') || '无';
@@ -122,12 +122,12 @@ export function buildCategoryNode(title: string, id: string, cases: TestCaseItem
   }
   const children = [...groups].map(([name, items], index) => {
     const preId = id + '-pre-' + (index + 1);
-    return node(name, preId, items.map((item, caseIndex) => buildCaseNode(item, preId + '-case-' + (caseIndex + 1))), { tag: [preconditionTag] });
+    return node(name, preId, items.map((item, caseIndex) => buildCaseNode(item, caseId?.(item) ?? preId + '-case-' + (caseIndex + 1))), { tag: [preconditionTag] });
   });
   return node('@' + stripCategory(title), id, children);
 }
 
-export function buildMindMap(cases: TestCaseItem[]): MindMapNode {
+export function buildMindMap(cases: TestCaseItem[], caseId?: (item: TestCaseItem) => string): MindMapNode {
   const groups = new Map<string, TestCaseItem[]>();
   for (const item of cases) {
     const name = stripCategory(item.category) || '未分类';
@@ -135,7 +135,7 @@ export function buildMindMap(cases: TestCaseItem[]): MindMapNode {
     group.push(item);
     groups.set(name, group);
   }
-  return { ...EMPTY_MAP, children: [...groups].map(([name, items], index) => buildCategoryNode(name, 'module-' + (index + 1), items)) };
+  return { ...EMPTY_MAP, children: [...groups].map(([name, items], index) => buildCategoryNode(name, 'module-' + (index + 1), items, caseId)) };
 }
 
 export function buildSkeleton(modules: TestCaseModulePlan[]) {
