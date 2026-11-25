@@ -41,3 +41,6 @@ mcp.json
 
 # Locally installed Skill text
 /skills/
+
+# Local conversation history database
+/.data/

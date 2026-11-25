@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { followUpPrompt, groundedFollowUps } from './follow-ups';
 import { withSkillGuidance } from './extensionContracts';
 import { casesSchema, planSchema } from './contracts';
 import { buildCategoryNode, buildMindMap, buildSkeleton, stripCategory, validateCaseContent } from './mindMap';
@@ -40,10 +42,20 @@ function checkedCases(cases: TestCaseItem[], category?: string) {
   return unique;
 }
 
-export async function generateTestCases(model: Model, materials: MaterialSnapshot, observe?: (raw: unknown) => void): Promise<TestCaseAgentResult> {
-  const result = await structured(model, withSkillGuidance(generationRules, materials.skills), materials, casesSchema, observe);
+export async function generateTestCases(
+  model: Model, materials: MaterialSnapshot, observe?: (raw: unknown) => void, suggestFollowUps = false,
+): Promise<TestCaseAgentResult> {
+  const prompt = suggestFollowUps
+    ? generationRules.replace('JSON 只包含 summary 和 cases。', 'JSON 包含 summary、cases 和 followUps。') + '\n' + followUpPrompt
+    : generationRules;
+  const schema = casesSchema.extend({ followUps: z.unknown().optional() });
+  const result = await structured(model, withSkillGuidance(prompt, materials.skills), materials, schema, observe);
   const cases = checkedCases(result.cases).map((item, index) => ({ ...item, id: 'case-' + (index + 1) }));
-  return { summary: result.summary, cases, mindMap: buildMindMap(cases) };
+  const followUps = suggestFollowUps ? groundedFollowUps(result.followUps, [
+    materials.requirement, ...materials.documents.map(({ text }) => text),
+    ...cases.flatMap(({ category, topic, steps, expected }) => [category, topic, steps, expected]),
+  ], [materials.requirement]) : [];
+  return { summary: result.summary, cases, mindMap: buildMindMap(cases), ...(followUps.length && { followUps }) };
 }
 
 export async function planTestCaseModules(model: Model, materials: MaterialSnapshot): Promise<TestCasePlanResult> {

@@ -1,22 +1,17 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
-import { fromBufferPromise, type Entry } from 'yauzl';
-import { maxArchiveBytes, maxImportedSkills, maxSkillContext, maxSkillFileBytes, skillContextSize, type TextSkill } from './extensionContracts';
+import { createWriteStream } from 'node:fs';
+import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { pipeline } from 'node:stream/promises';
+import { join, relative, sep } from 'node:path';
+import { fromBufferPromise, openPromise, type Entry } from 'yauzl';
+import type { TextSkill } from './extensionContracts';
 import { RequestError } from './modelConfig';
+import { groupSkillPaths, isSkillReference, pathInsideSkill } from './skillPaths';
 
 const installedDirectory = 'skills';
-const rootFile = /(?:^|\/)SKILL\.md$/i;
-const textReference = /\.(?:md|txt|json|yaml|yml|csv)$/i;
-const maxArchiveEntries = 512;
-const maxArchiveTextBytes = 256 * 1024;
-const maxReferences = 32;
 const decoder = new TextDecoder('utf-8', { fatal: true });
-
-function isReference(path: string) {
-  return path.startsWith('references/') ? textReference.test(path)
-    : !path.includes('/') && !rootFile.test(path) && /\.(md|txt)$/i.test(path);
-}
 
 function skillName(instructions: string, fallback: string) {
   const frontMatter = instructions.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -30,12 +25,6 @@ function decodeText(bytes: Uint8Array) {
   return text;
 }
 
-function checkSkills(skills: TextSkill[]) {
-  if (skillContextSize(skills) > maxSkillContext) {
-    throw new RequestError('Skill 文本与资料总计不能超过 40,000 字符', 413);
-  }
-}
-
 function loadedSkill(instructions: string, fallback: string, references: TextSkill['references']): TextSkill {
   if (!instructions) throw new RequestError('SKILL.md 不能为空', 422);
   const name = skillName(instructions, fallback);
@@ -43,88 +32,64 @@ function loadedSkill(instructions: string, fallback: string, references: TextSki
   return { id, name, instructions, references };
 }
 
-export async function readUpload(request: Request, limit: number) {
-  if (Number(request.headers.get('content-length')) > limit) throw new RequestError('Skill 文件超过上传大小限制', 413);
-  const reader = request.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  if (!reader) throw new RequestError('请选择 Skill 文件', 400);
+export async function importSkillUpload(request: Request, markdown: boolean) {
+  if (!request.body) throw new RequestError('请选择 Skill 文件', 400);
+  if (markdown) return importSkills(Buffer.from(await request.arrayBuffer()), true);
+  const directory = await mkdtemp(join(tmpdir(), 'test-cases-skill-'));
   try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      size += result.value.length;
-      if (size > limit) {
-        await reader.cancel().catch(() => undefined);
-        throw new RequestError('Skill 文件超过上传大小限制', 413);
-      }
-      chunks.push(result.value);
-    }
-    if (!size) throw new RequestError('Skill 文件不能为空', 400);
-    return Buffer.concat(chunks, size);
+    const path = join(directory, 'upload.zip');
+    await pipeline(request.body, createWriteStream(path, { mode: 0o600 }), { signal: request.signal });
+    return await importSkills(path);
   } finally {
-    reader.releaseLock();
+    await rm(directory, { recursive: true, force: true });
   }
 }
 
-export async function importSkills(archive: Buffer, markdown = false): Promise<TextSkill[]> {
+export async function importSkills(archive: Buffer | string, markdown = false): Promise<TextSkill[]> {
   try {
-    if (markdown) {
-      if (archive.length > maxSkillFileBytes) throw new RequestError('单个 Skill 文本文件不能超过 64 KB', 413);
-      const skills = [loadedSkill(decodeText(archive), '上传的 Skill', [])];
-      checkSkills(skills);
-      return skills;
+    if (markdown && Buffer.isBuffer(archive)) {
+      return [loadedSkill(decodeText(archive), '上传的 Skill', [])];
     }
-    if (archive.length > maxArchiveBytes) throw new RequestError('Skill ZIP 压缩包不能超过 8 MB', 413);
-    const zip = await fromBufferPromise(archive, { validateEntrySizes: true });
+    const fromDisk = typeof archive === 'string';
+    const zip = fromDisk
+      ? await openPromise(archive, { autoClose: false, validateEntrySizes: true })
+      : await fromBufferPromise(archive, { validateEntrySizes: true });
     try {
-      if (zip.entryCount > maxArchiveEntries) throw new RequestError('Skill 压缩包最多允许 512 个条目', 413);
       const entries = new Map<string, Entry>();
       for await (const entry of zip.eachEntry()) {
         const path = entry.fileName;
         if (path.startsWith('__MACOSX/') || path.endsWith('/')) continue;
         const fileType = (entry.externalFileAttributes >>> 16) & 0xf000;
         if (fileType && fileType !== 0x8000) throw new RequestError('Skill 压缩包仅支持普通文件', 422);
-        if (path.length > 300 || /[\p{Cc}]/u.test(path) || entries.has(path)) {
+        if (/[\p{Cc}]/u.test(path) || entries.has(path)) {
           throw new RequestError('Skill 压缩包存在无效或重复路径', 422);
         }
         entries.set(path, entry);
       }
-      const roots = [...entries.keys()].filter((path) => rootFile.test(path)).sort();
-      if (!roots.length) throw new RequestError('压缩包里没有找到 SKILL.md', 422);
-      if (roots.length > maxImportedSkills) throw new RequestError('单个压缩包最多包含 8 个 Skill', 413);
-      const ownerOf = (path: string) => roots.filter((root) => dirname(root) === '.' || path.startsWith(dirname(root) + '/'))
-        .sort((left, right) => dirname(right).length - dirname(left).length)[0];
-      let total = 0;
+      const groups = groupSkillPaths([...entries.keys()]).sort((a, b) => a.folder.localeCompare(b.folder));
+      if (!groups.length) throw new RequestError('压缩包里没有找到 SKILL.md', 422);
       async function readText(entry: Entry) {
-        total += entry.uncompressedSize;
-        if (entry.uncompressedSize > maxSkillFileBytes || total > maxArchiveTextBytes) {
-          throw new RequestError('单个 Skill 文本文件不能超过 64 KB，ZIP 文本解压总量不能超过 256 KB', 413);
-        }
         const stream = await zip.openReadStreamPromise(entry);
         const chunks: Buffer[] = [];
         for await (const chunk of stream) chunks.push(chunk);
         return decodeText(Buffer.concat(chunks));
       }
       const skills: TextSkill[] = [];
-      for (const root of roots) {
-        const folder = dirname(root);
-        const prefix = folder === '.' ? '' : folder + '/';
-        const referencePaths = [...entries.keys()].filter((path) => path.startsWith(prefix)
-          && isReference(path.slice(prefix.length)) && ownerOf(path) === root).sort();
-        if (referencePaths.length > maxReferences) throw new RequestError('每个 Skill 最多加载 32 份文本资料', 413);
-        const instructions = await readText(entries.get(root)!);
+      for (const { folder, manifests, references: referencePaths } of groups) {
+        if (manifests.length !== 1) throw new RequestError('每个 Skill 目录应只有一个 SKILL.md', 422);
+        const instructions = await readText(entries.get(manifests[0])!);
         const references: TextSkill['references'] = [];
-        for (const path of referencePaths) {
+        for (const path of referencePaths.sort()) {
           const text = await readText(entries.get(path)!);
-          if (text) references.push({ path: path.slice(prefix.length), text });
+          if (text) references.push({ path: pathInsideSkill(folder, path), text });
         }
-        skills.push(loadedSkill(instructions, folder === '.' ? '上传的 Skill' : folder.split('/').at(-1)!, references));
+        skills.push(loadedSkill(instructions, folder ? folder.split('/').at(-1)! : '上传的 Skill', references));
       }
-      checkSkills(skills);
       return skills;
     } finally {
+      const closed = fromDisk ? once(zip, 'close') : undefined;
       zip.close();
+      await closed;
     }
   } catch (error) {
     if (error instanceof RequestError) throw error;
@@ -134,7 +99,7 @@ export async function importSkills(archive: Buffer, markdown = false): Promise<T
 
 async function readLocalText(path: string) {
   const info = await lstat(path);
-  if (!info.isFile() || info.size > maxSkillFileBytes) throw new RequestError('已安装 Skill 含无效或过大的文本文件', 422);
+  if (!info.isFile()) throw new RequestError('已安装 Skill 含无效的文本文件', 422);
   return decodeText(await readFile(path));
 }
 
@@ -167,15 +132,13 @@ export async function resolveSkills(installed: string[] = [], imported: TextSkil
     const topLevel = await readdir(dir, { withFileTypes: true });
     const paths = [...topLevel, ...files].filter((entry) => entry.isFile())
       .map((entry) => join(entry.parentPath, entry.name))
-      .filter((path) => isReference(relative(dir, path).split(sep).join('/'))).sort();
-    if (paths.length > maxReferences) throw new RequestError('每个 Skill 最多加载 32 份文本资料', 413);
+      .filter((path) => isSkillReference(relative(dir, path).split(sep).join('/'))).sort();
     const references: TextSkill['references'] = [];
     for (const path of paths) {
       const text = await readLocalText(path);
       if (text) references.push({ path: relative(dir, path).split(sep).join('/'), text });
     }
     selected.push(loadedSkill(instructions, id, references));
-    checkSkills(selected);
   }
   return selected;
 }

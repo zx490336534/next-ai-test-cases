@@ -1,34 +1,23 @@
 import { z } from 'zod';
 
-export const maxSkillContext = 40_000;
-export const maxArchiveBytes = 8 * 1024 * 1024;
-export const maxSkillFileBytes = 64 * 1024;
-export const maxImportedSkills = 8;
-
 const idSchema = z.string().min(1).max(160);
 export const skillSchema = z.object({
   id: idSchema,
   name: z.string().min(1).max(120),
-  instructions: z.string().trim().min(1).max(maxSkillContext),
+  instructions: z.string().trim().min(1),
   references: z.array(z.object({
-    path: z.string().min(1).max(300),
-    text: z.string().min(1).max(maxSkillContext),
-  })).max(32),
+    path: z.string().min(1),
+    text: z.string().min(1),
+  })),
 });
 
 export type TextSkill = z.infer<typeof skillSchema>;
 
-export function skillContextSize(skills: TextSkill[]) {
-  return skills.reduce((size, skill) => size + skill.instructions.length
-    + skill.references.reduce((total, reference) => total + reference.text.length, 0), 0);
-}
-
 export const extensionsSchema = z.object({
   mcpIds: z.array(idSchema).max(64).optional(),
-  installedSkillIds: z.array(idSchema).max(maxImportedSkills).optional(),
-  importedSkills: z.array(skillSchema).max(maxImportedSkills).optional(),
-}).refine((value) => (value.installedSkillIds?.length ?? 0) + (value.importedSkills?.length ?? 0) <= maxImportedSkills
-  && skillContextSize(value.importedSkills ?? []) <= maxSkillContext);
+  installedSkillIds: z.array(idSchema).optional(),
+  importedSkills: z.array(skillSchema).optional(),
+});
 
 export type Extensions = z.infer<typeof extensionsSchema>;
 export type ExtensionCatalog = {

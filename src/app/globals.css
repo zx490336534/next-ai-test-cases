@@ -44,17 +44,31 @@ body {
   background-size: 22px 22px;
 }
 
-.workspace-body {
-  grid-template-rows: minmax(0, 1fr);
+.panel-separator {
+  position: relative;
+  width: 10px;
+  outline: none;
 }
 
-.workspace-body[data-chat-open="true"] {
-  grid-template-rows: minmax(135px, 0.85fr) minmax(0, 1.15fr);
+.panel-separator[aria-orientation="horizontal"] {
+  width: auto;
+  height: 10px;
 }
 
-@media (min-width: 900px) {
-  .workspace-body[data-chat-open="true"] {
-    grid-template-columns: minmax(0, 1fr) clamp(310px, 28vw, 420px);
-    grid-template-rows: minmax(0, 1fr);
-  }
+.panel-separator::after {
+  position: absolute;
+  inset: 0 3px;
+  border-radius: 9999px;
+  background: #edf4f2;
+  content: "";
+}
+
+.panel-separator[aria-orientation="horizontal"]::after {
+  inset: 3px 0;
+}
+
+.panel-separator:hover::after,
+.panel-separator:focus-visible::after,
+.panel-separator[data-separator="active"]::after {
+  background: #98c9c1;
 }

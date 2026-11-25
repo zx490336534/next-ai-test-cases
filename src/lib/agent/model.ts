@@ -1,13 +1,24 @@
 import type { z } from 'zod';
 import { RequestError, type resolveModelSettings } from './modelConfig';
 
-export type ModelUsage = { calls: number; inputTokens: number; outputTokens: number; reported: number };
+export type ModelUsage = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  reported: number;
+  totalTokens?: number;
+  detailed?: number;
+};
 export type ModelMessage = { role: 'system' | 'user'; content: string };
 export type Model = {
   invoke: (messages: ModelMessage[]) => Promise<string>;
   usage: ModelUsage;
 };
 export const modelError = (error: unknown) => error instanceof RequestError ? error.message : '处理失败，请稍后重试';
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 export function createModel(config: ReturnType<typeof resolveModelSettings>, signal?: AbortSignal): Model {
   const usage: ModelUsage = { calls: 0, inputTokens: 0, outputTokens: 0, reported: 0 };
@@ -32,17 +43,33 @@ export function createModel(config: ReturnType<typeof resolveModelSettings>, sig
       throw new RequestError(timeout.aborted ? '模型请求超时' : '模型网关不可达或拒绝连接', timeout.aborted ? 504 : 502);
     });
     if (!response.ok) {
-      await response.body?.cancel();
+      if (response.status === 400 || response.status === 413) {
+        const error = await response.json().catch(() => null);
+        const code = error?.error?.code ?? error?.error?.type;
+        if (code === 'context_length_exceeded' || code === 'context_window_exceeded') {
+          throw new RequestError('所用模型的上下文容量不足，可减少本轮附带的 Skill，或切换到上下文更大的模型。', 422);
+        }
+      } else {
+        await response.body?.cancel();
+      }
       if (response.status === 401 || response.status === 403) throw new RequestError('模型网关拒绝认证，请核对 Key 和模型权限', 401);
       if (response.status === 429) throw new RequestError('模型网关限流，请稍后重试', 429);
       throw new RequestError('模型网关返回错误（HTTP ' + response.status + '）', 502);
     }
     const payload = await response.json().catch(() => null);
     const count = payload?.usage;
-    if (Number.isFinite(count?.prompt_tokens) && Number.isFinite(count?.completion_tokens)) {
+    const inputTokens = tokenCount(count?.prompt_tokens);
+    const outputTokens = tokenCount(count?.completion_tokens);
+    const hasBreakdown = inputTokens !== undefined && outputTokens !== undefined;
+    const total = tokenCount(count?.total_tokens) ?? (hasBreakdown ? inputTokens + outputTokens : undefined);
+    if (total !== undefined) {
       usage.reported++;
-      usage.inputTokens += count.prompt_tokens;
-      usage.outputTokens += count.completion_tokens;
+      usage.totalTokens = (usage.totalTokens ?? 0) + total;
+    }
+    if (hasBreakdown) {
+      usage.detailed = (usage.detailed ?? 0) + 1;
+      usage.inputTokens += inputTokens;
+      usage.outputTokens += outputTokens;
     }
     const text: unknown = payload?.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) throw new RequestError('模型未返回文本结果', 502);

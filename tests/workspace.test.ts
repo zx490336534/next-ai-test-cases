@@ -132,7 +132,8 @@ test('exports the currently edited tree even when legacy test cases are supplied
   const nodes = file[0].rootTopic.children.attached[0].children.attached[0].children.attached;
   assert.equal(nodes[0].title, '确认订单 & 金额');
   assert.equal(nodes[0].markers[0].markerId, 'priority-3');
-  assert.equal(nodes[0].children.attached[0].title, '测试步骤\n' + row.steps);
+  assert.equal(nodes[0].children.attached[0].title, row.steps);
+  assert.equal(nodes[0].children.attached[0].children.attached[0].title, row.expected);
   const csv = toCsv(readMindMap(edited).cases);
   assert.match(csv, /确认订单 & 金额","P2/);
   assert.match(csv, /1\. 展示付款金额/);
@@ -236,8 +237,47 @@ test('reads each approved MCP document once and never calls the gateway for unap
   assert.match(result.documents[0].text, /访客只能查看摘要/);
 });
 
-test('uses the selected node path in suggestions and falls back to a whole-map review', () => {
+test('shows grounded suggestions and uses the selected test step as the fallback', () => {
   const [selected] = rootCases();
-  assert.ok(showSuggestedPrompts(map, selected.data.uid!)[0].text.includes('「订单」里前置条件为「已付款」的用例「打开订单」'));
-  assert.ok(showSuggestedPrompts(map, 'missing')[0].text.startsWith('审查当前所有模块'));
+  const known = [{ anchor: '付款金额', text: '付款金额显示为零时，帮我核对这笔订单的可观察结果。' }];
+  assert.deepEqual(showSuggestedPrompts(map, selected.data.uid!, known).map(({ text }) => text), [known[0].text]);
+  const unrelated = [{ anchor: '退款上限', text: '退款上限需要另外补边界用例吗？' }];
+  const local = showSuggestedPrompts(map, selected.children[0].data.uid!, unrelated)[0].text;
+  assert.match(local, /打开订单页.*展示付款金额/);
+  assert.ok(!local.includes('退款'));
+  assert.deepEqual(showSuggestedPrompts(EMPTY_MAP, null), []);
+});
+
+test('builds one node per step and nests only its corresponding result', () => {
+  const item = { ...row, steps: '1. 打开订单\n2. 点击详情', expected: '1. 展示订单列表\n2. 展示付款金额' };
+  const tree = buildMindMap([item]);
+  const test = tree.children[0].children[0].children[0];
+  assert.deepEqual(test.children.map((step) => [step.data.text, step.children.map((result) => result.data.text)]), [
+    ['1. 打开订单', ['1. 展示订单列表']],
+    ['2. 点击详情', ['2. 展示付款金额']],
+  ]);
+  const exported = readMindMap(tree).cases[0];
+  assert.equal(exported.steps, item.steps);
+  assert.equal(exported.expected, item.expected);
+  test.children[0].children = [];
+  assert.equal(readMindMap(tree).cases[0].expected, '\n2. 展示付款金额');
+});
+
+test('splits paired legacy groups without overwriting ambiguous older details', () => {
+  const tree = buildMindMap([row]);
+  const test = tree.children[0].children[0].children[0];
+  test.children = [{
+    data: { text: '测试步骤\n1. 打开订单\n2. 点击详情' },
+    children: [{ data: { text: '期望结果\n1. 展示订单列表\n2. 展示付款金额' }, children: [] }],
+  }];
+  const migrated = normalizeMindMap(tree);
+  const steps = migrated.children[0].children[0].children[0].children;
+  assert.equal(steps.length, 2);
+  assert.equal(steps[1].children[0].data.text, '2. 展示付款金额');
+  assert.deepEqual(readMindMap(migrated).cases, readMindMap(tree).cases);
+  assert.deepEqual(normalizeMindMap(migrated), migrated);
+  test.children[0].children[0].data.text = '期望结果\n2. 展示付款金额';
+  const retained = normalizeMindMap(tree);
+  assert.equal(retained.children[0].children[0].children[0].children.length, 1);
+  assert.equal(readMindMap(retained).cases[0].expected, '2. 展示付款金额');
 });

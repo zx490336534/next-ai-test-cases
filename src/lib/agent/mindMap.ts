@@ -15,6 +15,10 @@ export function stripCategory(text: string) {
   return text.trim().replace(/^@\s*/, '').trim();
 }
 
+function isMapRoot(root: MindMapNode) {
+  return root.data.text.trim().startsWith('@') || root.children.some((child) => child.data.text.trim().startsWith('@'));
+}
+
 export function normalizeMindMap(root: MindMapNode): MindMapNode {
   const reserved = new Set<string>();
   const seen = new Set<string>();
@@ -42,12 +46,13 @@ export function normalizeMindMap(root: MindMapNode): MindMapNode {
     }
     seen.add(id);
     const text = (isPrecondition ? raw.replace(/^!\s*/, '') : raw.replace(prefix?.[0] ?? /$^/, '')) || raw;
+    const children = depth === 3 ? migrateLegacySteps(node.children, id) : node.children;
     return {
       data: { text, uid: id, id, ...(priority && { priority }), ...(nextTags.size && { tag: [...nextTags] }) },
-      children: node.children.map((child, index) => visit(child, depth + 1, path + '-' + (index + 1))),
+      children: children.map((child, index) => visit(child, depth + 1, path + '-' + (index + 1))),
     };
   }
-  return visit(root, 0, 'root');
+  return visit(root, isMapRoot(root) ? 0 : 1, 'root');
 }
 
 function numberedLines(value: string) {
@@ -80,10 +85,31 @@ function node(text: string, id: string, children: MindMapNode[] = [], extra: Par
   return { data: { text, uid: id, id, ...extra }, children };
 }
 
+function resultsAlign(steps: string[], expected: string[]) {
+  return steps.length === expected.length && steps.every((step, index) => {
+    const number = step.match(numberPrefix)?.[1];
+    const resultNumber = expected[index].match(numberPrefix)?.[1];
+    return !number || !resultNumber || number === resultNumber;
+  });
+}
+
+function buildStepNodes(steps: string[], expected: string[], id: string) {
+  return steps.map((step, index) => {
+    const position = index + 1;
+    return node(step, id + '-step-' + position, expected[index]
+      ? [node(expected[index], id + '-expected-' + position)]
+      : []);
+  });
+}
+
 export function buildCaseNode(item: Pick<TestCaseItem, 'topic' | 'priority' | 'steps' | 'expected'>, id: string) {
-  return node(item.topic, id, [
-    node('测试步骤\n' + item.steps, id + '-steps', [node('期望结果\n' + item.expected, id + '-expected')]),
-  ], { priority: item.priority, tag: [item.priority] });
+  const steps = numberedLines(item.steps);
+  const expected = numberedLines(item.expected);
+  // Preserve the original grouping of older exports with ambiguous pairs.
+  const children = expected.length && !resultsAlign(steps, expected)
+    ? [node('测试步骤\n' + item.steps, id + '-steps', [node('期望结果\n' + item.expected, id + '-expected')])]
+    : buildStepNodes(steps, expected, id);
+  return node(item.topic, id, children, { priority: item.priority, tag: [item.priority] });
 }
 
 export function buildCategoryNode(title: string, id: string, cases: TestCaseItem[] = []) {
@@ -122,9 +148,23 @@ function readDetail(text: string, label: string) {
   return heading ? [heading[1], ...lines.slice(1)].filter(Boolean).join('\n').trim() : null;
 }
 
+function migrateLegacySteps(children: MindMapNode[], id: string) {
+  const [group, sibling] = children;
+  if (!group || children.length > 2) return children;
+  const [nested] = group.children;
+  const expectedGroup = nested ?? sibling;
+  if (!expectedGroup || (nested && (sibling || group.children.length !== 1)) || expectedGroup.children.length) return children;
+  const stepsText = readDetail(group.data.text, '测试步骤');
+  const expectedText = readDetail(expectedGroup.data.text, '期望结果');
+  if (!stepsText || expectedText === null) return children;
+  const steps = numberedLines(stepsText);
+  const expected = numberedLines(expectedText);
+  if (!resultsAlign(steps, expected)) return children;
+  return buildStepNodes(steps, expected, id);
+}
+
 export function readMindMap(root: MindMapNode) {
-  const hasCategoryChildren = root.children.some((child) => child.data.text.trim().startsWith('@'));
-  const categories = root.data.text.trim().startsWith('@') || hasCategoryChildren ? root.children : [root];
+  const categories = isMapRoot(root) ? root.children : [root];
   const cases: TestCaseItem[] = [];
   let preconditions = 0;
   for (const category of categories) {
@@ -143,7 +183,12 @@ export function readMindMap(root: MindMapNode) {
             }
           } else {
             const result = readDetail(child.data.text, '期望结果');
-            if (result !== null) expected.push(result);
+            if (result !== null) {
+              expected.push(result);
+            } else if (child.data.text.trim()) {
+              steps.push(child.data.text);
+              expected.push(child.children.map((item) => item.data.text).filter(Boolean).join('\n'));
+            }
           }
         }
         if (!test.data.text.trim() || (!test.data.priority && !steps.length && !expected.length)) continue;

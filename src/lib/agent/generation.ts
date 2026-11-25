@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { FollowUp } from './follow-ups';
 import { moduleSchema } from './contracts';
 import { buildSkeleton } from './mindMap';
 import { materialDigest, type MaterialSnapshot } from './materials';
@@ -30,7 +31,7 @@ export type GenerationEvent =
   | { type: 'plan'; modules: TestCaseModulePlan[]; sourceHash: string; mindMap: MindMapNode }
   | { type: 'module'; id: string; mindMap: MindMapNode }
   | { type: 'module-error'; id: string; message: string }
-  | { type: 'complete'; summary: string; mindMap?: MindMapNode }
+  | { type: 'complete'; summary: string; mindMap?: MindMapNode; followUps?: FollowUp[] }
   | { type: 'error'; message: string };
 
 // This default favors the smaller call graph until a planned variant passes the evaluation gates.
@@ -41,6 +42,7 @@ export async function runGeneration(input: {
   materials: MaterialSnapshot;
   concurrency: 0 | 1 | 2;
   retry?: GenerationRetry;
+  suggestFollowUps?: boolean;
   signal: AbortSignal;
   emit: (event: GenerationEvent) => void;
 }) {
@@ -50,10 +52,10 @@ export async function runGeneration(input: {
   if (concurrency === 0 && !retry) {
     emit({ type: 'progress', message: '正在根据需求生成用例…' });
     emit({ type: 'activity', item: { id: 'generate', kind: 'step', label: '生成用例并校验结构', state: 'running' } });
-    const result = await generateTestCases(model, materials);
+    const result = await generateTestCases(model, materials, undefined, input.suggestFollowUps);
     signal.throwIfAborted();
     emit({ type: 'activity', item: { id: 'generate', kind: 'step', label: '生成用例并校验结构', state: 'done', detail: result.cases.length + ' 条用例' } });
-    emit({ type: 'complete', summary: result.summary, mindMap: result.mindMap });
+    emit({ type: 'complete', summary: result.summary, mindMap: result.mindMap, followUps: result.followUps });
     return;
   }
 

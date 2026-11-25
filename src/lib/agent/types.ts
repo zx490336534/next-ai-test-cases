@@ -1,3 +1,5 @@
+import type { FollowUp } from './follow-ups';
+
 export type TestCaseItem = {
   id: string;
   category: string;
@@ -30,6 +32,7 @@ export type MindMapNode = {
 
 export type TestCaseAgentResult = {
   summary: string;
+  followUps?: FollowUp[];
   cases: TestCaseItem[];
   mindMap: MindMapNode;
 };
@@ -56,5 +59,6 @@ export type ChatMessage = {
 
 export type MindMapChatResult = {
   assistantReply: string;
+  followUps?: FollowUp[];
   mindMap: MindMapNode;
 };

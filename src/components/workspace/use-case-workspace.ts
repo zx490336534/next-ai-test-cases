@@ -2,16 +2,16 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { conversationText, type ConversationMessage, type RetryRequest } from '@/lib/agent/conversation';
 import type { Extensions } from '@/lib/agent/extensionContracts';
-import { EMPTY_MAP, normalizeMindMap, readMindMap, toCsv } from '@/lib/agent/mindMap';
+import { normalizeMindMap, readMindMap, toCsv } from '@/lib/agent/mindMap';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
 import type { MindMapNode } from '@/lib/agent/types';
-import { readSavedSettings } from './model-settings';
+import type { SavedWorkspace } from '@/lib/workspaces/types';
 
 type Pending = { retry: RetryRequest; extensions: Extensions; errors: string[] };
-type Run = { extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
+type Run = { incomplete?: ConversationMessage; staleReply?: ConversationMessage; staleEdit?: boolean; startedAt: number; extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
 
 function download(blob: Blob, name: string) {
   const link = document.createElement('a');
@@ -21,10 +21,11 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
-export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEditorEditing: () => boolean) {
-  const [mindMap, setMindMap] = useState(EMPTY_MAP);
-  const [settings, setSettings] = useState<ModelSettings>({});
-  const [extensions, setExtensions] = useState<Extensions>({});
+export function useCaseWorkspace(
+  session: SavedWorkspace, settings: ModelSettings, extensions: Extensions,
+  readEditor: () => MindMapNode | undefined, isEditorEditing: () => boolean,
+) {
+  const [mindMap, setMindMap] = useState(() => normalizeMindMap(session.mindMap));
   const [mode, setMode] = useState<'generate' | 'chat' | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -32,13 +33,8 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
   const [retry, setRetry] = useState<Pending | null>(null);
   const [exporting, setExporting] = useState(false);
   const active = useRef<Run | null>(null);
-  const mapRef = useRef(EMPTY_MAP);
+  const mapRef = useRef(mindMap);
   const revision = useRef(0);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setSettings(readSavedSettings()));
-    return () => cancelAnimationFrame(frame);
-  }, []);
 
   const commitMap = useCallback((next: MindMapNode) => {
     const normalized = normalizeMindMap(next);
@@ -47,30 +43,38 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
     revision.current++;
     setMindMap(normalized);
   }, []);
-  const { cases, categories, preconditions } = useMemo(() => readMindMap(mindMap), [mindMap]);
+  const { cases } = useMemo(() => readMindMap(mindMap), [mindMap]);
   const priorities = { P0: 0, P1: 0, P2: 0, P3: 0 };
   for (const row of cases) priorities[row.priority]++;
 
   const transport = useMemo(() => new DefaultChatTransport<ConversationMessage>({
     api: '/api/test-case-agent/conversation',
     prepareSendMessagesRequest({ body, messages }) {
-      return {
-        body: {
-          ...body,
-          messages: messages.filter(({ role }) => role !== 'system').slice(-20)
-            .map((message) => ({ role: message.role, content: conversationText(message) }))
-            .filter(({ content }) => content),
-        },
-      };
+      const transcript = messages.filter(({ role }) => role !== 'system')
+        .map((message) => ({ role: message.role, content: conversationText(message) }))
+        .filter(({ content }) => content);
+      const original = transcript.find(({ role }) => role === 'user');
+      const originalRequirement = original && original.content.length <= 40_000 && !transcript.slice(-12).includes(original)
+        ? original.content : undefined;
+      return { body: { ...body, messages: transcript.slice(-20), originalRequirement } };
     },
   }), []);
 
   const chat = useChat<ConversationMessage>({
+    id: session.id,
+    messages: session.messages,
     transport,
     onError(err) {
       let message = err.message;
       try { message = JSON.parse(message).error ?? message; } catch { /* Transport errors are plain text. */ }
       setError(message);
+    },
+    onFinish({ message, isAbort, isError, isDisconnect }) {
+      const run = active.current;
+      if (!run) return;
+      if (run.staleEdit) run.staleReply = message;
+      if (message.metadata?.execution || !(isAbort || isError || isDisconnect)) return;
+      run.incomplete = message;
     },
     onData(part) {
       const run = active.current;
@@ -103,20 +107,23 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
         case 'edit': {
           const current = readEditor();
           if (current) commitMap(current);
-          if (isEditorEditing() || revision.current !== run.atRevision) setError('等待回复期间脑图已编辑。本次建议未应用，请重新发送指令。');
-          else commitMap(event.mindMap);
+          if (isEditorEditing() || revision.current !== run.atRevision) {
+            run.staleEdit = true;
+            setError('等待回复期间脑图已编辑。本次建议未应用，请重新发送指令。');
+          } else commitMap(event.mindMap);
           break;
         }
       }
     },
   });
 
-  async function send(text: string, previous?: Pending) {
+  async function send(text: string, previous?: Pending, selectedNodeId?: string) {
     if (active.current || !text.trim()) return;
     const current = readEditor();
     if (current) commitMap(current);
     const requirement = previous?.retry.requirement ?? text;
     const run: Run = {
+      startedAt: performance.now(),
       extensions: previous?.extensions ?? extensions,
       atRevision: revision.current,
       requirement,
@@ -131,10 +138,22 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
     setError('');
     setWarning('');
     try {
-      await chat.sendMessage({ text }, { body: { settings, extensions: run.extensions, currentMindMap: mapRef.current, retry: previous?.retry } });
+      await chat.sendMessage({ text }, { body: { settings, extensions: run.extensions, currentMindMap: mapRef.current, selectedNodeId, retry: previous?.retry } });
     } catch {
       setError('对话连接中断，请稍后重试。');
     } finally {
+      const stale = run.staleReply;
+      if (stale?.metadata?.followUps) {
+        chat.setMessages((messages) => messages.map((message) => message.id === stale.id
+          ? { ...message, metadata: { ...message.metadata, followUps: undefined } } : message));
+      }
+      if (run.incomplete) {
+        const elapsedMs = Math.round(performance.now() - run.startedAt);
+        const finished = { ...run.incomplete, metadata: { ...run.incomplete.metadata, execution: { elapsedMs } } };
+        chat.setMessages((messages) => messages.some(({ id }) => id === finished.id)
+          ? messages.map((item) => item.id === finished.id ? finished : item)
+          : [...messages, finished]);
+      }
       if (run.pending?.retry.plan.failedIds.length) setRetry(run.pending);
       else if (previous || !mapRef.current.children.length) setRetry(null);
       active.current = null;
@@ -169,9 +188,9 @@ export function useCaseWorkspace(readEditor: () => MindMapNode | undefined, isEd
   }
 
   return {
-    mindMap, commitMap, settings, setSettings, extensions, setExtensions, messages: chat.messages, send, progress, mode,
+    mindMap, commitMap, messages: chat.messages, send: (text: string, selectedNodeId?: string) => send(text, undefined, selectedNodeId), progress, mode,
     error, setError, warning, retry, exporting, exportCsv, exportXmind,
-    stats: { caseCount: cases.length, categories, preconditions, priorities },
+    stats: { caseCount: cases.length, priorities },
     retryFailed: () => retry && send('重试未完成的模块', retry),
     cancel: () => { void chat.stop(); setError('已停止，当前脑图仍保留。'); },
   };

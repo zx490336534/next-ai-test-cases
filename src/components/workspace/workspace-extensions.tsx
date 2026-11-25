@@ -1,29 +1,34 @@
 'use client';
 
 import { useId, useRef, useState, type ChangeEvent } from 'react';
-import { Blocks, BookOpen, FileUp, X } from 'lucide-react';
+import { Blocks, BookOpen, FileUp, FolderUp, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  maxArchiveBytes, maxImportedSkills, maxSkillContext, maxSkillFileBytes, skillContextSize,
-  type ExtensionCatalog, type Extensions, type TextSkill,
-} from '@/lib/agent/extensionContracts';
+import type { ExtensionCatalog, Extensions, TextSkill } from '@/lib/agent/extensionContracts';
+import { importSkillSelection, mergeImportedSkills, type SkillImportFailure } from './skill-upload';
 
-export function WorkspaceExtensions({ value, onChange, disabled }: {
+export function WorkspaceExtensions({ value, onChange, library, onLibraryChange, disabled }: {
   value: Extensions;
   onChange: (value: Extensions) => void;
+  library: TextSkill[];
+  onLibraryChange: (skills: TextSkill[]) => void;
   disabled: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const folderPicker = useRef<HTMLInputElement>(null);
   const title = useId();
   const [catalog, setCatalog] = useState<ExtensionCatalog | null>(null);
   const [catalogError, setCatalogError] = useState('');
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number }>();
+  const [failures, setFailures] = useState<SkillImportFailure[]>([]);
   const [status, setStatus] = useState('');
   const [importError, setImportError] = useState('');
   const imported = value.importedSkills ?? [];
   const installed = value.installedSkillIds ?? [];
   const activeCount = imported.length + installed.length;
+  const activeIds = new Set(imported.map(({ id }) => id));
+  const mounted = catalog?.skills ?? [];
 
   async function refresh() {
     setCatalog(null);
@@ -42,40 +47,28 @@ export function WorkspaceExtensions({ value, onChange, disabled }: {
     void refresh();
   }
 
-  async function upload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
+  async function upload(event: ChangeEvent<HTMLInputElement>, directory: boolean) {
+    const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
-    if (!file || importing) return;
-    const markdown = /\.md$/i.test(file.name);
+    if (!files.length || importing) return;
     setImportError('');
+    setFailures([]);
     setStatus('');
-    if (file.size > (markdown ? maxSkillFileBytes : maxArchiveBytes)) {
-      setImportError(markdown ? 'Markdown 文件不能超过 64 KB。' : 'Skill 压缩包不能超过 8 MB。');
-      return;
-    }
+    setProgress(undefined);
     setImporting(true);
     try {
-      const response = await fetch('/api/test-case-agent/extensions', {
-        method: 'POST', headers: { 'Content-Type': markdown ? 'text/markdown' : 'application/zip' }, body: file, signal: AbortSignal.timeout(30_000),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? '导入失败');
-      const known = new Set(imported.map(({ id }) => id));
-      const additions = (data.skills as TextSkill[]).filter(({ id }) => {
-        if (known.has(id)) return false;
-        known.add(id);
-        return true;
-      });
-      const next = [...imported, ...additions];
-      if (next.length + installed.length > maxImportedSkills || skillContextSize(next) > maxSkillContext) {
-        throw new Error('请先移除部分已加载的 Skill。每个会话最多启用 8 个，导入文本总计最多 40,000 字符。');
-      }
-      onChange({ ...value, importedSkills: next });
-      setStatus(additions.length ? (markdown ? '已加载 ' : '已解压并加载 ') + additions.length + ' 个 Skill' : '这份 Skill 已经加载。');
+      const result = await importSkillSelection(files, directory, (done, total) => setProgress({ done, total }));
+      const merged = mergeImportedSkills(library, imported, result.skills);
+      onLibraryChange(merged.library);
+      onChange({ ...value, importedSkills: merged.active });
+      setFailures(result.failures);
+      if (merged.addedCount) setStatus('已导入 ' + merged.addedCount + ' 个 Skill，已启用 ' + merged.addedCount + ' 个。');
+      else if (result.skills.length) setStatus('所选 Skill 已经导入。');
     } catch (error) {
       setImportError(error instanceof Error ? error.message : '导入失败');
     } finally {
       setImporting(false);
+      setProgress(undefined);
     }
   }
 
@@ -131,41 +124,73 @@ export function WorkspaceExtensions({ value, onChange, disabled }: {
 
           <fieldset className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
             <legend className="px-1 text-sm font-semibold">测试规范 · Skill</legend>
-            <p className="text-xs text-slate-600">选择已安装的 Skill，或导入 ZIP、.skill 和 Markdown。压缩包会自动解压并读取其中的文本资料。</p>
-            {catalog?.skills.map(({ id, name }) => (
+            <p className="text-xs text-slate-600">选择已安装的 Skill，或导入文件和文件夹。文件夹中可混放解压后的 Skill 和 ZIP、.skill 压缩包。</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Button type="button" size="sm" variant="outline" disabled={importing || !mounted.length && !library.length}
+                onClick={() => onChange({ ...value, installedSkillIds: catalog ? mounted.map(({ id }) => id) : installed, importedSkills: library })}>全选</Button>
+              <Button type="button" size="sm" variant="outline" disabled={importing || !activeCount}
+                onClick={() => onChange({ ...value, installedSkillIds: [], importedSkills: [] })}>全不选</Button>
+            </div>
+            {mounted.map(({ id, name }) => (
               <label key={id} className="flex min-w-0 items-center gap-2 rounded-md bg-[#f5faf8] px-2.5 py-2 text-sm">
-                <input type="checkbox" className="accent-primary" checked={installed.includes(id)} disabled={importing || !installed.includes(id) && activeCount >= maxImportedSkills}
+                <input type="checkbox" className="accent-primary" checked={installed.includes(id)} disabled={importing}
                   onChange={(event) => onChange({
                     ...value, installedSkillIds: event.target.checked ? [...installed, id] : installed.filter((item) => item !== id),
                   })} />
                 <span className="break-all">{name}</span>
               </label>
             ))}
-            <input type="file" ref={picker} accept=".zip,.skill,.md" className="sr-only" aria-label="选择 Skill 压缩包" tabIndex={-1} onChange={upload} />
-            <Button type="button" variant="outline" size="sm" disabled={importing} onClick={() => picker.current?.click()}>
-              <FileUp className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              {importing ? '正在解压…' : '上传 Skill'}
-            </Button>
+            <input type="file" ref={picker} accept=".zip,.skill,.md" multiple className="sr-only"
+              aria-label="选择 Skill 文件" tabIndex={-1} onChange={(event) => { void upload(event, false); }} />
+            <input type="file" ref={folderPicker} {...{ webkitdirectory: '' }} className="sr-only"
+              aria-label="选择 Skill 文件夹" tabIndex={-1} onChange={(event) => { void upload(event, true); }} />
+            <div className="flex flex-wrap gap-1.5">
+              <Button type="button" variant="outline" size="sm" disabled={importing} onClick={() => picker.current?.click()}>
+                <FileUp className="mr-1.5 h-4 w-4" aria-hidden="true" />上传文件
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={importing} onClick={() => folderPicker.current?.click()}>
+                <FolderUp className="mr-1.5 h-4 w-4" aria-hidden="true" />选择文件夹
+              </Button>
+            </div>
+            {importing ? <p role="status" className="text-xs text-slate-600">
+              {progress ? '正在导入 ' + progress.done + ' / ' + progress.total + ' 项…' : '正在识别 Skill…'}
+            </p> : null}
             {status ? <p role="status" className="text-xs text-primary">{status}</p> : null}
             {importError ? <p role="alert" className="text-xs text-red-700">{importError}</p> : null}
-            {imported.map((skill) => (
-              <div key={skill.id} className="flex items-start justify-between gap-2 rounded-lg border border-[#e1ece9] bg-[#f8fbfa] px-2.5 py-2">
-                <details className="min-w-0 flex-1">
-                  <summary className="cursor-pointer text-sm font-medium break-all">
-                    <BookOpen aria-hidden="true" className="mx-1 inline h-3.5 w-3.5 text-primary" />{skill.name}
-                    {skill.references.length ? <span className="ml-2 text-xs font-normal text-slate-600">{skill.references.length} 份资料</span> : null}
-                  </summary>
-                  <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{skill.instructions}</pre>
-                  {skill.references.length ? <ul className="mt-2 text-xs text-slate-600">
-                    {skill.references.map((reference) => <li className="break-all" key={reference.path}>{reference.path}</li>)}
-                  </ul> : null}
-                </details>
-                <button type="button" disabled={importing} className="shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-600 hover:bg-muted"
-                  aria-label={'移除 Skill ' + skill.name} onClick={() => onChange({
-                    ...value, importedSkills: imported.filter((item) => item.id !== skill.id),
-                  })}>移除</button>
-              </div>
-            ))}
+            {failures.length ? <details className="text-xs text-amber-900">
+              <summary className="cursor-pointer">{failures.length} 项未导入</summary>
+              <ul className="mt-1 max-h-36 space-y-1 overflow-auto pl-3">
+                {failures.map(({ label, reason }, index) => <li key={label + index} className="break-all">{label} · {reason}</li>)}
+              </ul>
+            </details> : null}
+            {library.length ? <p className="text-xs text-slate-600">已导入 {library.length} 个，已启用 {imported.length} 个导入 Skill。</p> : null}
+            {library.map((skill) => {
+              const enabled = activeIds.has(skill.id);
+              return (
+                <div key={skill.id} className="flex items-start justify-between gap-2 rounded-lg border border-[#e1ece9] bg-[#f8fbfa] px-2.5 py-2">
+                  <input type="checkbox" className="mt-1 shrink-0 accent-primary" checked={enabled}
+                    aria-label={'启用 ' + skill.name} disabled={importing}
+                    onChange={(event) => onChange({
+                      ...value, importedSkills: event.target.checked ? [...imported, skill] : imported.filter((item) => item.id !== skill.id),
+                    })} />
+                  <details className="min-w-0 flex-1">
+                    <summary className="cursor-pointer text-sm font-medium break-all">
+                      <BookOpen aria-hidden="true" className="mx-1 inline h-3.5 w-3.5 text-primary" />{skill.name}
+                      {skill.references.length ? <span className="ml-2 text-xs font-normal text-slate-600">{skill.references.length} 份资料</span> : null}
+                    </summary>
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{skill.instructions}</pre>
+                    {skill.references.length ? <ul className="mt-2 text-xs text-slate-600">
+                      {skill.references.map((reference) => <li className="break-all" key={reference.path}>{reference.path}</li>)}
+                    </ul> : null}
+                  </details>
+                  <button type="button" disabled={importing} className="shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-600 hover:bg-muted"
+                    aria-label={'移除 Skill ' + skill.name} onClick={() => {
+                      onLibraryChange(library.filter((item) => item.id !== skill.id));
+                      onChange({ ...value, importedSkills: imported.filter((item) => item.id !== skill.id) });
+                    }}>移除</button>
+                </div>
+              );
+            })}
           </fieldset>
           <footer className="flex justify-end gap-2">
             {catalogError ? <Button type="button" variant="outline" size="sm" onClick={refresh}>刷新扩展列表</Button> : null}
