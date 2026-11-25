@@ -31,7 +31,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ~~~
 
-打开 http://localhost:3000，点右上角「模型设置」，填写 API Key。模型名留空时使用服务端设定，服务端的默认模型是 `gpt-4.1-mini`。点「测试连接」发送一次简短请求，再点「保存」。
+打开 [http://localhost:3000](http://localhost:3000)，点右上角「模型设置」，填写 API Key。模型名留空时使用服务端设定，服务端的默认模型是 `gpt-4.1-mini`。点「测试连接」发送一次简短请求，再点「保存」。
 
 也可以复制配置模板，在本机填好默认值后启动：
 
@@ -59,7 +59,7 @@ pnpm build
 pnpm start:local -p 3000
 ~~~
 
-打开 http://127.0.0.1:3000 后，在页面填入网关的 OpenAI 兼容 API 根地址，例如 `http://127.0.0.1:8080/v1`。该模式用于单机使用，通过回环地址监听。
+打开 [http://127.0.0.1:3000](http://127.0.0.1:3000) 后，在页面填入网关的 OpenAI 兼容 API 根地址，例如 `http://127.0.0.1:8080/v1`。该模式用于单机使用，通过回环地址监听。
 
 ## 会话历史
 
@@ -88,7 +88,7 @@ pnpm start:local -p 3000
 
 原有的 `/api/test-case-agent`、`/plan`、`/module`、`/chat` 和 `/export-xmind` 入口继续可用。对话使用 `/api/test-case-agent/conversation` 的 AI SDK 消息流。会话历史和操作由 `/api/test-case-agent/sessions` 管理。
 
-## 验证与评测
+## 验证
 
 ~~~bash
 pnpm lint
@@ -96,5 +96,3 @@ pnpm typecheck
 pnpm test
 pnpm build
 ~~~
-
-[消融实验与复现命令](doc/refactor-evaluation.md) 包含冻结样本、覆盖评审、真实模型对照和最终流程选择。
