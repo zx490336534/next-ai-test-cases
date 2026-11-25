@@ -33,7 +33,7 @@ const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer">
   <meta name="local-model-gateway" content="">
   <title>AI 测试用例助手 · 单文件版</title>

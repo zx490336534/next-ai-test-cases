@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import { ArrowDown, ArrowUp, CornerDownRight, Pencil, Plus, Trash2 } from 'lucide-react';
 import { EMPTY_MAP, normalizeMindMap } from '@/lib/agent/mindMap';
 import type { MindMapNode } from '@/lib/agent/types';
@@ -9,6 +9,7 @@ type Props = {
   data: MindMapNode | null;
   onChange?: (data: MindMapNode) => void;
   readOnly?: boolean;
+  compact?: boolean;
   onSelectionChange?: (id: string | null) => void;
   onScaleChange?: (scalePercent: number) => void;
 };
@@ -26,6 +27,7 @@ export type MindMapViewHandle = {
   locate: (id: string) => void;
   read: () => MindMapNode | undefined;
   isEditing: () => boolean;
+  finishTextEdit: () => void;
 };
 
 const TAG_COLORS = {
@@ -80,14 +82,17 @@ type MindMapInstance = {
   keyCommand?: { removeShortcut: (key: string) => void; addShortcut: (key: string, action: () => void) => void };
   renderer?: {
     activeNodeList: MindMapNodeLike[];
+    root?: MindMapNodeLike;
     textEdit?: {
       show: (input: { node: MindMapNodeLike }) => Promise<void>;
       isShowTextEdit: () => boolean;
+      hideEditTextBox: () => void;
     };
   };
   view?: {
     scale?: number;
-    setScale?: (scale: number) => void;
+    setScale?: (scale: number, x?: number, y?: number) => void;
+    translateXY?: (x: number, y: number) => void;
     fit?: () => void;
     reset?: () => void;
   };
@@ -194,9 +199,10 @@ function extractRootData(rawData: unknown) {
 }
 
 export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMapView(
-  { data, onChange, onScaleChange, onSelectionChange, readOnly = false },
+  { data, onChange, onScaleChange, onSelectionChange, readOnly = false, compact = false },
   ref,
 ) {
+  const gestureRef = useRef<{ x: number; y: number; distance: number | null } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<MindMapInstance | null>(null);
   const currentDataRef = useRef<MindMapNode>(data || EMPTY_MAP);
@@ -251,10 +257,22 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           instance.view?.reset?.();
           didReset = true;
         }
-        instance.view?.fit?.();
-        const scale = instance.view?.scale;
-        if (typeof scale === 'number') {
-          onScaleChangeRef.current?.(Math.round(scale * 100));
+        const view = instance.view;
+        view?.fit?.();
+        if (compact && view?.scale && view.scale < 0.85) {
+          const root = instance.renderer?.root?.group;
+          const node = (root?.node ?? root?.el)?.getBoundingClientRect();
+          const canvas = containerRef.current?.getBoundingClientRect();
+          if (node && canvas && node.width > 0) {
+            const x = node.left - canvas.left + node.width / 2;
+            const y = node.top - canvas.top + node.height / 2;
+            const left = Math.min(canvas.width / 2, 16 + node.width * 0.85 / view.scale / 2);
+            view.setScale?.(0.85, x, y);
+            view.translateXY?.(left - x, canvas.height / 2 - y);
+          }
+        }
+        if (typeof view?.scale === 'number') {
+          onScaleChangeRef.current?.(Math.round(view.scale * 100));
         }
       } catch {
         // fit is best-effort only; rendering should not fail because of it.
@@ -272,7 +290,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       setTimeout(fit, 320),
       setTimeout(fit, 640),
     ];
-  }, []);
+  }, [compact]);
 
   const syncScale = useCallback(() => {
     const scale = instanceRef.current?.view?.scale;
@@ -354,6 +372,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       },
       read,
       isEditing: () => instanceRef.current?.renderer?.textEdit?.isShowTextEdit() ?? false,
+      finishTextEdit: () => instanceRef.current?.renderer?.textEdit?.hideEditTextBox(),
       undo: () => {
         if (readOnlyRef.current) return;
         instanceRef.current?.execCommand?.('BACK');
@@ -422,6 +441,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           maxHistoryCount: 100,
           addHistoryTime: 200,
           mousewheelAction: 'zoom',
+          ...(compact && { textAutoWrapWidth: 220 }),
           mousewheelZoomActionReverse: false,
           enableCtrlKeyNodeSelection: true,
           enableAutoEnterTextEditWhenKeydown: true,
@@ -482,8 +502,8 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
             const bbox = groupEl.getBoundingClientRect();
             if (bbox.width > 0 && bbox.height > 0) {
               setPriorityEditor({
-                x: Math.max(8, bbox.left - wrapperRect.left),
-                y: Math.max(8, bbox.bottom - wrapperRect.top + 4),
+                x: Math.max(4, Math.min(wrapperRect.width - 224, bbox.left - wrapperRect.left)),
+                y: Math.max(4, Math.min(wrapperRect.height - 58, bbox.bottom - wrapperRect.top + 4)),
                 currentPriority: priority,
                 nodeUid,
               });
@@ -520,7 +540,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       mountedRef.current = false;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [read, scheduleFit, syncScale]);
+  }, [compact, read, scheduleFit, syncScale]);
 
   useEffect(() => {
     if (!instanceRef.current) return;
@@ -576,6 +596,34 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     };
   }, []);
 
+  function trackGesture(event: TouchEvent<HTMLDivElement>) {
+    if (event.type === 'touchstart') {
+      fitTimerRefs.current.forEach(clearTimeout);
+      fitTimerRefs.current = [];
+    }
+    const [first, second] = Array.from(event.touches);
+    const view = instanceRef.current?.view;
+    if (!view || !first || event.touches.length > 2 || event.type === 'touchcancel') {
+      gestureRef.current = null;
+      return;
+    }
+    const next = second ? {
+      x: (first.clientX + second.clientX) / 2,
+      y: (first.clientY + second.clientY) / 2,
+      distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY),
+    } : { x: first.clientX, y: first.clientY, distance: null };
+    const before = gestureRef.current;
+    gestureRef.current = next;
+    if (event.type !== 'touchmove' || !before || (before.distance === null) !== (next.distance === null)) return;
+
+    if (before.distance && next.distance && view.scale) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const scale = Math.min(3, Math.max(0.1, view.scale * next.distance / before.distance));
+      view.setScale?.(scale, before.x - rect.left, before.y - rect.top);
+    }
+    view.translateXY?.(next.x - before.x, next.y - before.y);
+  }
+
   function edit(command: 'rename' | 'child' | 'sibling' | 'up' | 'down' | 'delete') {
     const instance = instanceRef.current;
     const nodes = selectionRef.current;
@@ -628,10 +676,16 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           ))}
         </div>
       ) : null}
-      <div ref={containerRef} className="h-full w-full" aria-label="测试用例脑图画布" />
+      <div ref={containerRef} className="h-full w-full touch-none" aria-label="测试用例脑图画布"
+        onTouchStart={trackGesture} onTouchMove={trackGesture} onTouchEnd={trackGesture} onTouchCancel={trackGesture} />
+      {compact && !selection && (
+        <p className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white/90 px-2 py-1 text-xs text-slate-600 [@media(pointer:fine)]:hidden">
+          拖动画布 · 双指缩放
+        </p>
+      )}
       {selection && !readOnly ? (
         <div role="toolbar" aria-label="节点操作" onMouseDown={(event) => event.preventDefault()}
-          className="absolute bottom-4 left-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap gap-0.5 rounded-xl border border-[#dce8e7] bg-white p-1.5 shadow-lg shadow-[#173938]/8">
+          className="absolute bottom-2 left-2 z-10 flex max-w-[calc(100%-1rem)] lg:bottom-4 lg:left-4 flex-wrap gap-0.5 rounded-xl border border-[#dce8e7] bg-white p-1.5 shadow-lg shadow-[#173938]/8">
           {nodeTools.filter((item) => (item.root || !selection.root) && (!item.single || selection.count === 1)).map(({ command, icon: Icon, label }) => (
             <button type="button" key={command} aria-label={label} title={label}
               className="flex h-8 items-center gap-1 rounded-md px-2 text-xs text-slate-700 hover:bg-[#eaf4f2] focus-visible:outline-2 focus-visible:outline-offset-1"

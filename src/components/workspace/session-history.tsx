@@ -100,7 +100,7 @@ export function SessionHistory({ items, selected, disabled, select, rename, reor
   rename: (id: string, title: string) => Promise<void>;
   reorder: (id: string, targetId: string, placement: Placement) => Promise<void>;
   remove: (id: string) => Promise<void>;
-  collapse: () => void;
+  collapse?: () => void;
 }) {
   const [editing, setEditing] = useState<{ id: string; title: string }>();
   const [deleting, setDeleting] = useState<string>();
@@ -162,10 +162,10 @@ export function SessionHistory({ items, selected, disabled, select, rename, reor
         <h2 className="flex min-w-0 items-center gap-2 truncate text-sm font-semibold text-[#183637]">
           <History aria-hidden="true" className="h-4 w-4 shrink-0" />历史对话
         </h2>
-        <button id="collapse-history" type="button" aria-label="折叠历史对话" title="折叠历史对话" onClick={collapse}
+        {collapse && <button id="collapse-history" type="button" aria-label="折叠历史对话" title="折叠历史对话" onClick={collapse}
           className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-white text-slate-600 hover:bg-muted">
           <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
-        </button>
+        </button>}
       </header>
       <DndContext id="workspace-history-sort" sensors={sensors} collisionDetection={closestCenter}
         onDragEnd={(event) => { void sort(event); }}>

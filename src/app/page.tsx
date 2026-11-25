@@ -6,6 +6,7 @@ import {
   Expand,
   FileArchive,
   Loader2,
+  Ellipsis,
   Maximize2,
   MessageSquare,
   PanelRightClose,
@@ -32,7 +33,7 @@ import { ModelSettingsDialog, readSavedSettings } from '@/components/workspace/m
 import { WorkspaceExtensions } from '@/components/workspace/workspace-extensions';
 import { useCaseWorkspace } from '@/components/workspace/use-case-workspace';
 import { SessionHistory } from '@/components/workspace/session-history';
-import { WorkspacePanels } from '@/components/workspace/workspace-panels';
+import { WorkspacePanels, WorkspaceViews, useCompactWorkspace, type WorkspaceView } from '@/components/workspace/workspace-panels';
 import { sessionRequest } from '@/components/workspace/session-client';
 import { useSessionSave } from '@/components/workspace/use-session-save';
 import { standalone } from '@/lib/client/runtime';
@@ -163,6 +164,7 @@ function Workspace({
   setIsChatOpen: (open: boolean) => void;
 }) {
   const mindMapRef = useRef<MindMapViewHandle | null>(null);
+  const frameRef = useRef<HTMLElement | null>(null);
   const editorPanelRef = useRef<HTMLDivElement | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
@@ -182,6 +184,9 @@ function Workspace({
   const [input, setInput] = useState('');
   const [scalePercent, setScalePercent] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const compact = useCompactWorkspace();
+  const [view, selectView] = useState<WorkspaceView>(() => session.mindMap.children.length ? 'canvas' : 'chat');
+  const chatVisible = compact ? view === 'chat' : isChatOpen;
 
   const loadingChat = workspace.mode !== null;
   const isInitialState = mindMap.children.length === 0;
@@ -200,8 +205,29 @@ function Workspace({
 
   useEffect(() => {
     const feed = feedRef.current;
-    if (feed && followLatestRef.current) feed.scrollTop = feed.scrollHeight;
-  }, [isChatOpen, loadingChat, messageList]);
+    if (chatVisible && feed && followLatestRef.current) feed.scrollTop = feed.scrollHeight;
+  }, [chatVisible, loadingChat, messageList]);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    const viewport = window.visualViewport;
+    if (!compact || !frame || !viewport) return;
+    function resize() {
+      if (!frame || !viewport) return;
+      if (viewport.scale <= 1.01 && viewport.height < window.innerHeight) {
+        const inset = Math.max(0, frame.getBoundingClientRect().top - viewport.offsetTop);
+        frame.style.setProperty('--workspace-height', Math.max(0, Math.floor(viewport.height - inset)) + 'px');
+      } else {
+        frame.style.removeProperty('--workspace-height');
+      }
+    }
+    resize();
+    viewport.addEventListener('resize', resize);
+    return () => {
+      viewport.removeEventListener('resize', resize);
+      frame.style.removeProperty('--workspace-height');
+    };
+  }, [compact]);
 
   function fillSuggestion(content: string) {
     setInput(content);
@@ -209,7 +235,7 @@ function Workspace({
   }
 
   function handleInputKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (compact || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     void sendMessage();
   }
@@ -263,6 +289,11 @@ function Workspace({
     requestAnimationFrame(() => document.getElementById((open ? 'collapse-' : 'expand-') + side)?.focus());
   }
 
+  function changeView(next: WorkspaceView) {
+    if (view === 'canvas' && next !== 'canvas') mindMapRef.current?.finishTextEdit();
+    selectView(next);
+  }
+
   function sendMessage() {
     if (!canSend) return;
     followLatestRef.current = true;
@@ -270,127 +301,164 @@ function Workspace({
     setInput('');
   }
 
+  const suggestions = !loadingChat && !input.trim() ? (
+    <ChatSuggestions tree={mindMap} selection={selection} blank={isInitialState} followUps={messageList.at(-1)?.metadata?.followUps} choose={fillSuggestion} />
+  ) : null;
+
+  const extraActions = (
+    <>
+      <Button
+        aria-label="撤销"
+        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
+        title="撤销"
+        variant="outline"
+        size="sm"
+        disabled={workspace.mode === 'generate'}
+        onClick={() => mindMapRef.current?.undo()}
+      >
+        <Undo2 className="h-4 w-4" />{compact && '撤销'}
+      </Button>
+      <Button
+        aria-label="重做"
+        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
+        title="重做"
+        variant="outline"
+        size="sm"
+        disabled={workspace.mode === 'generate'}
+        onClick={() => mindMapRef.current?.redo()}
+      >
+        <Redo2 className="h-4 w-4" />{compact && '重做'}
+      </Button>
+      <Button
+        aria-label="展开全部"
+        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
+        title="展开全部"
+        variant="outline"
+        size="sm"
+        onClick={() => mindMapRef.current?.expandAll()}
+      >
+        <Expand className="h-4 w-4" />{compact && '展开全部'}
+      </Button>
+      <Button
+        aria-label="折叠全部"
+        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
+        title="折叠全部"
+        variant="outline"
+        size="sm"
+        onClick={() => mindMapRef.current?.collapseAll()}
+      >
+        <Shrink className="h-4 w-4" />{compact && '折叠全部'}
+      </Button>
+      <Button
+        aria-label="刷新脑图"
+        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
+        title="刷新脑图"
+        variant="outline"
+        size="sm"
+        onClick={() => mindMapRef.current?.refresh()}
+      >
+        <RefreshCw className="h-4 w-4" />{compact && '刷新脑图'}
+      </Button>
+      {!compact && <Button
+        aria-label={isFullscreen ? '退出全屏' : '全屏'}
+        className="h-9 w-9 p-0"
+        title={isFullscreen ? '退出全屏' : '全屏'}
+        variant="outline"
+        size="sm"
+        onClick={toggleFullscreen}
+      >
+        {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+      </Button>}
+      <Button variant="outline" size="sm" onClick={exportCsv} disabled={!hasCases}>
+        <Download className="mr-2 h-4 w-4" />
+        CSV
+      </Button>
+      <Button variant="outline" size="sm" onClick={exportXmind} disabled={!hasCases || loadingExportXmind}>
+        {loadingExportXmind ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <FileArchive className="mr-2 h-4 w-4" />
+        )}
+        XMind
+      </Button>
+    </>
+  );
+
   return (
-    <main className="h-dvh overflow-hidden bg-[#edf4f2] p-2 sm:p-3">
+    <main ref={frameRef} className={'workspace-frame overflow-hidden bg-[#edf4f2]' + (compact ? ' workspace-compact' : '')}>
       <Card ref={editorPanelRef} className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border-[#dce8e7] bg-white shadow-sm">
-        <CardHeader className="border-b border-[#e7eeec] px-3 py-2.5 sm:px-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-[#183637]"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#e4f3ee] text-[#14685f]"><Workflow aria-hidden="true" className="h-4 w-4" /></span>测试用例脑图{standalone && <span className="text-xs font-normal text-slate-600">单文件版</span>}</CardTitle>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Button
-                aria-label="撤销"
-                className="h-9 w-9 p-0"
-                title="撤销"
-                variant="outline"
-                size="sm"
-                disabled={workspace.mode === 'generate'}
-                onClick={() => mindMapRef.current?.undo()}
-              >
-                <Undo2 className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label="重做"
-                className="h-9 w-9 p-0"
-                title="重做"
-                variant="outline"
-                size="sm"
-                disabled={workspace.mode === 'generate'}
-                onClick={() => mindMapRef.current?.redo()}
-              >
-                <Redo2 className="h-4 w-4" />
-              </Button>
-              <span className="mx-1 h-5 w-px bg-slate-200" />
-              <Button
-                aria-label="缩小"
-                className="h-9 w-9 p-0"
-                title="缩小"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.zoomOut()}
-              >
-                <ZoomOut className="h-4 w-4" />
-              </Button>
-              <span className="w-12 text-center text-xs text-slate-600">{scalePercent}%</span>
-              <Button
-                aria-label="放大"
-                className="h-9 w-9 p-0"
-                title="放大"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.zoomIn()}
-              >
-                <ZoomIn className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label="适应画布"
-                className="h-9 w-9 p-0"
-                title="适应画布"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.fit()}
-              >
-                <Scan className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label="展开全部"
-                className="h-9 w-9 p-0"
-                title="展开全部"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.expandAll()}
-              >
-                <Expand className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label="折叠全部"
-                className="h-9 w-9 p-0"
-                title="折叠全部"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.collapseAll()}
-              >
-                <Shrink className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label="刷新脑图"
-                className="h-9 w-9 p-0"
-                title="刷新脑图"
-                variant="outline"
-                size="sm"
-                onClick={() => mindMapRef.current?.refresh()}
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-              <Button
-                aria-label={isFullscreen ? '退出全屏' : '全屏'}
-                className="h-9 w-9 p-0"
-                title={isFullscreen ? '退出全屏' : '全屏'}
-                variant="outline"
-                size="sm"
-                onClick={toggleFullscreen}
-              >
-                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-              </Button>
-              <span className="mx-1 h-5 w-px bg-slate-200" />
-              <NodeSearch tree={mindMap} onSelect={(id) => mindMapRef.current?.locate(id)} />
-              <ModelSettingsDialog settings={settings} onChange={setSettings} />
-              <Button variant="outline" size="sm" onClick={exportCsv} disabled={!hasCases}>
-                <Download className="mr-2 h-4 w-4" />
-                CSV
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportXmind} disabled={!hasCases || loadingExportXmind}>
-                {loadingExportXmind ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <FileArchive className="mr-2 h-4 w-4" />
+        <CardHeader className="gap-2 border-b border-[#e7eeec] px-2.5 py-2 sm:px-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <CardTitle className="mr-auto flex min-w-0 items-center gap-1.5 text-sm font-semibold tracking-tight text-[#183637] lg:gap-2.5 lg:text-base">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#e4f3ee] text-[#14685f] lg:h-8 lg:w-8">
+                <Workflow aria-hidden="true" className="h-4 w-4" />
+              </span>
+              测试用例脑图
+              {standalone && <span className="shrink-0 text-[11px] font-normal text-slate-600">单文件版</span>}
+            </CardTitle>
+            <ModelSettingsDialog settings={settings} onChange={setSettings} />
+            {compact && <div className="w-full sm:w-auto sm:min-w-64"><WorkspaceViews view={view} select={changeView} /></div>}
+            {(!compact || view === 'canvas') && (
+              <div className="flex w-full min-w-0 items-center gap-1 lg:w-auto lg:flex-wrap lg:gap-1.5">
+                <Button
+                  aria-label="缩小"
+                  className="h-9 w-9 p-0"
+                  title="缩小"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => mindMapRef.current?.zoomOut()}
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
+                <span className="w-12 text-center text-xs text-slate-600">{scalePercent}%</span>
+                <Button
+                  aria-label="放大"
+                  className="h-9 w-9 p-0"
+                  title="放大"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => mindMapRef.current?.zoomIn()}
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <Button
+                  aria-label="适应画布"
+                  className="h-9 w-9 p-0"
+                  title="适应画布"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => mindMapRef.current?.fit()}
+                >
+                  <Scan className="h-4 w-4" />
+                </Button>
+                {compact && (
+                  <details className="relative ml-auto" onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return;
+                    event.currentTarget.open = false;
+                    event.currentTarget.querySelector('summary')?.focus();
+                  }}>
+                    <summary aria-label="更多脑图操作" title="更多脑图操作"
+                      className="grid h-9 w-9 cursor-pointer list-none place-items-center rounded-md border border-input bg-white hover:bg-muted">
+                      <Ellipsis aria-hidden="true" className="h-4 w-4" />
+                    </summary>
+                    <div onClick={(event) => {
+                      if (!(event.target instanceof Element) || !event.target.closest('button:not(:disabled)')) return;
+                      const menu = event.currentTarget.closest('details');
+                      if (menu) {
+                        menu.open = false;
+                        menu.querySelector('summary')?.focus();
+                      }
+                    }} className="absolute right-0 z-40 mt-2 grid max-h-[min(16rem,45dvh)] w-56 grid-cols-2 gap-1 overflow-y-auto rounded-xl border border-[#dce8e7] bg-white p-2 shadow-lg">
+                      {extraActions}
+                    </div>
+                  </details>
                 )}
-                XMind
-              </Button>
-            </div>
+                {!compact && extraActions}
+                <NodeSearch tree={mindMap} onSelect={(id) => mindMapRef.current?.locate(id)} />
+              </div>
+            )}
           </div>
-          {hasCases ? (
+          {!compact && hasCases ? (
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
               {(['P0', 'P1', 'P2', 'P3'] as const).map((priority) => (
                 <span key={priority} className="rounded-md border bg-slate-50 px-2 py-1">
@@ -400,24 +468,26 @@ function Workspace({
             </div>
           ) : null}
         </CardHeader>
-        <CardContent className="mt-0 min-h-0 min-w-0 flex-1 p-3">
+        <CardContent className="mt-0 min-h-0 min-w-0 flex-1 p-2 lg:p-3">
           <WorkspacePanels
+            compact={compact} view={view}
             expandHistory={() => togglePanel('history', true)}
             expandChat={() => togglePanel('chat', true)}
-            history={isHistoryOpen ? <SessionHistory items={history} selected={session.id} disabled={loadingChat || switching}
+            history={compact || isHistoryOpen ? <SessionHistory items={history} selected={session.id} disabled={loadingChat || switching}
               select={(id) => { void switchSession(id); }} rename={renameSession} reorder={reorderSessions} remove={removeFromHistory}
-              collapse={() => togglePanel('history', false)} /> : undefined}
+              collapse={compact ? undefined : () => togglePanel('history', false)} /> : undefined}
             canvas={<section aria-label="脑图编辑区" className="h-full min-h-0 min-w-0">
               <MindMapView
                 ref={mindMapRef}
                 data={mindMap}
+                compact={compact}
                 onChange={workspace.commitMap}
                 readOnly={workspace.mode === 'generate' || switching}
                 onScaleChange={setScalePercent}
                 onSelectionChange={setSelection}
               />
             </section>}
-            chat={isChatOpen ? (
+            chat={compact || isChatOpen ? (
               <aside aria-label="AI 对话区" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#d6e6e2] bg-white">
                 <div className="flex items-center justify-between gap-3 border-b border-[#e1ebe8] bg-[#f3f8f6] px-3 py-2.5">
                   <div className="flex min-w-0 items-center gap-2">
@@ -432,10 +502,10 @@ function Workspace({
                       className="h-8 gap-1.5 px-2" onClick={() => { void switchSession(); }}>
                       <Plus aria-hidden="true" className="h-4 w-4" />新建会话
                     </Button>
-                    <button id="collapse-chat" type="button" aria-label="折叠对话" title="折叠对话" onClick={() => togglePanel('chat', false)}
+                    {!compact && <button id="collapse-chat" type="button" aria-label="折叠对话" title="折叠对话" onClick={() => togglePanel('chat', false)}
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-white text-slate-600 hover:bg-muted">
                       <PanelRightClose aria-hidden="true" className="h-4 w-4" />
-                    </button>
+                    </button>}
                   </div>
                 </div>
 
@@ -443,7 +513,7 @@ function Workspace({
                   <div ref={feedRef} onScroll={(event) => {
                     const feed = event.currentTarget;
                     followLatestRef.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 56;
-                  }} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f7faf9] px-3 py-3">
+                  }} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#f7faf9] px-3 py-3">
                     <div className="flex flex-col gap-2.5">
                       {messageList.length === 0 ? (
                         <div className="rounded-lg border border-dashed bg-white p-3 text-sm leading-6 text-slate-500">
@@ -460,21 +530,22 @@ function Workspace({
                           {loadingMessage || '正在处理…'}
                         </div>
                       ) : null}
+                      {compact && suggestions}
                     </div>
                   </div>
 
-                  <div className="min-w-0 border-t border-[#e2ece9] bg-white p-3">
-                    {!loadingChat && !input.trim() ? <ChatSuggestions tree={mindMap} selection={selection} blank={isInitialState} followUps={messageList.at(-1)?.metadata?.followUps} choose={fillSuggestion} /> : null}
+                  <div className="workspace-composer min-w-0 border-t border-[#e2ece9] bg-white p-2.5 lg:p-3">
+                    {!compact && suggestions}
                     <Textarea
                       ref={composerRef}
                       aria-label={isInitialState ? "需求正文" : "修改指令"}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleInputKeyDown}
-                      className="min-h-[74px] resize-none rounded-xl bg-[#fafcfb] text-sm"
+                      className="min-h-16 resize-none rounded-xl bg-[#fafcfb] text-base lg:min-h-[74px] lg:text-sm"
                       placeholder={
                         isInitialState
-                          ? '输入需求内容，按 Enter 发送；Shift+Enter 换行'
+                          ? compact ? '输入需求内容' : '输入需求内容，按 Enter 发送；Shift+Enter 换行'
                           : '输入修改指令，例如：删除某分支，新增 3 条边界用例'
                       }
                     />
@@ -496,7 +567,7 @@ function Workspace({
                         </Button>
                       </div>
                     )}
-                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    <div className="workspace-chat-actions mt-2 flex flex-wrap items-center justify-end gap-2">
                       <WorkspaceExtensions value={extensions} onChange={setExtensions} library={skillLibrary} onLibraryChange={setSkillLibrary}
                           disabled={loadingChat || switching} />
                       {loadingChat && (

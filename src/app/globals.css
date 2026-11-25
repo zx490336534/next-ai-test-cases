@@ -50,11 +50,6 @@ body {
   outline: none;
 }
 
-.panel-separator[aria-orientation="horizontal"] {
-  width: auto;
-  height: 10px;
-}
-
 .panel-separator::after {
   position: absolute;
   inset: 0 3px;
@@ -63,12 +58,61 @@ body {
   content: "";
 }
 
-.panel-separator[aria-orientation="horizontal"]::after {
-  inset: 3px 0;
-}
-
 .panel-separator:hover::after,
 .panel-separator:focus-visible::after,
 .panel-separator[data-separator="active"]::after {
   background: #98c9c1;
+}
+
+.workspace-frame {
+  --workspace-gutter: 0.5rem;
+  height: var(--workspace-height, 100dvh);
+  padding: max(var(--workspace-gutter), var(--workspace-safe-top, env(safe-area-inset-top, 0px)))
+    max(var(--workspace-gutter), env(safe-area-inset-right, 0px))
+    max(var(--workspace-gutter), env(safe-area-inset-bottom, 0px))
+    max(var(--workspace-gutter), env(safe-area-inset-left, 0px));
+}
+
+@media (width >= 1024px) {
+  .workspace-frame { --workspace-gutter: 0.75rem; }
+}
+
+.workspace-compact :where(input:not([type="checkbox"], [type="radio"], [type="file"]), textarea) {
+  font-size: 1rem;
+}
+
+.workspace-compact dialog {
+  max-block-size: min(88dvh, calc(var(--workspace-height, 100dvh) - 1rem));
+}
+
+.workspace-compact .workspace-composer {
+  max-block-size: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (pointer: coarse) {
+  .workspace-compact :where(button, summary) {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+}
+
+@media (width >= 640px) and (height < 480px) {
+  .workspace-compact .workspace-composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 0.5rem;
+  }
+
+  .workspace-compact .workspace-composer > :not(textarea, .workspace-chat-actions) {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-compact .workspace-chat-actions {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    margin-block-start: 0;
+  }
 }
