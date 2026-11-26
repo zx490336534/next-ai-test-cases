@@ -27,7 +27,7 @@ export const testCaseSchema = caseContentSchema.extend({
 });
 export const casesSchema = z.object({
   summary: z.string(),
-  cases: z.array(testCaseSchema).min(1).max(120),
+  cases: z.array(testCaseSchema).min(1),
 });
 export const mindMapSchema: z.ZodType<MindMapNode> = z.lazy(() => z.object({
   data: z.object({

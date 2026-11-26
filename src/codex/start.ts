@@ -1,6 +1,7 @@
 import { main } from './server';
+import { WorkspaceError } from './store';
 
-void main().catch(() => {
-  console.error('启动测试用例工作区失败，请检查 Node.js 版本和本地数据库目录。');
+void main().catch((error) => {
+  console.error(error instanceof WorkspaceError ? error.message : '测试用例工作区调用失败，请检查参数和本地数据库。');
   process.exitCode = 1;
 });

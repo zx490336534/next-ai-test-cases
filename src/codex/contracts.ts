@@ -20,8 +20,9 @@ export const suiteDetails = z.object({
 });
 export const createSuiteInput = suiteDetails.extend({
   context: suiteDetails.shape.context.default(''),
-  cases: z.array(caseFields).min(1).max(120),
+  cases: z.array(caseFields).min(1),
 });
+export const appendCasesInput = z.object({ suiteId, revision, cases: z.array(caseFields).min(1) });
 export const editSuiteInput = z.object({
   suiteId,
   revision,
@@ -30,13 +31,13 @@ export const editSuiteInput = z.object({
     z.object({ action: z.literal('add'), entry: caseFields }),
     z.object({ action: z.literal('update'), caseId, entry: caseFields.partial() }),
     z.object({ action: z.literal('remove'), caseId }),
-  ])).max(120).default([]),
+  ])).default([]),
 }).refine(({ changes, details }) => changes.length > 0 || Boolean(details && Object.keys(details).length), '请提交至少一项修改');
 
 export const startRunInput = z.object({
   suiteId,
   revision,
-  caseIds: z.array(caseId).min(1).max(120),
+  caseIds: z.array(caseId).min(1),
   target: z.string().trim().min(1).max(1000).describe('由用户确定的执行对象和环境'),
 });
 export const outcomeSchema = z.object({
@@ -44,7 +45,7 @@ export const outcomeSchema = z.object({
   status: z.enum(['passed', 'failed', 'blocked', 'skipped']),
   evidence: z.string().trim().min(1).max(8000).describe('实际观察、结果与可回查的证据，阻塞或跳过时写明原因'),
 });
-export const recordRunInput = z.object({ suiteId, runId, outcomes: z.array(outcomeSchema).min(1).max(120) });
+export const recordRunInput = z.object({ suiteId, runId, outcomes: z.array(outcomeSchema).min(1) });
 export type CaseFields = z.infer<typeof caseFields>;
 export type Suite = z.infer<typeof suiteDetails> & {
   id: string;
@@ -52,6 +53,7 @@ export type Suite = z.infer<typeof suiteDetails> & {
   updatedAt: string;
   cases: TestCaseItem[];
 };
+export type SuiteListItem = Pick<Suite, 'id' | 'title' | 'revision' | 'updatedAt'> & { count: number };
 export type Outcome = z.infer<typeof outcomeSchema>;
 export type CaseRun = {
   id: string;

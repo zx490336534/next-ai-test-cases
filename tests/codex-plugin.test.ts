@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { writeBoardFile } from '../src/codex/board-file';
 import { createCaseServer } from '../src/codex/server';
-import { createSuiteInput, editSuiteInput, type SuiteView } from '../src/codex/contracts';
+import { createSuiteInput, editSuiteInput, recordRunInput, startRunInput, type SuiteView } from '../src/codex/contracts';
 import { openCaseStore } from '../src/codex/store';
 import { buildMindMap } from '../src/lib/agent/mindMap';
 
@@ -84,26 +85,72 @@ test('Codex execution records freeze the chosen subset and guard evidence across
   assert.deepEqual(store.open(suite.id).lastRun, processed);
 });
 
+test('large workspaces can be created, appended and run without a case-count ceiling', (t) => {
+  const store = openCaseStore(':memory:');
+  t.after(store.close);
+  const cases = Array.from({ length: 121 }, (_, index) => ({ ...sample.cases[0], topic: '用例 ' + index }));
+  const { suite } = store.create(createSuiteInput.parse({ ...sample, cases }));
+  const { suite: updated } = store.update(editSuiteInput.parse({
+    suiteId: suite.id, revision: suite.revision,
+    changes: cases.map((entry) => ({ action: 'add', entry: { ...entry, topic: entry.topic + ' 新增' } })),
+  }));
+  assert.equal(updated.cases.length, 242);
+  const caseIds = updated.cases.map(({ id }) => id);
+  const { run } = store.startRun(startRunInput.parse({
+    suiteId: suite.id, revision: updated.revision, caseIds, target: '本地存储边界验收',
+  }));
+  assert.equal(run.cases.length, 242);
+  const recorded = store.record(recordRunInput.parse({
+    suiteId: suite.id, runId: run.id,
+    outcomes: caseIds.map((caseId) => ({ caseId, status: 'skipped', evidence: '用于验证批量记录。' })),
+  }));
+  assert.equal(recorded.outcomes.length, 242);
+});
+
 test('MCP tools expose a board resource and persist a generated suite', async (t) => {
   const store = openCaseStore(':memory:');
-  const server = createCaseServer(store, '<!doctype html><title>测试用例</title>');
+  const directory = await mkdtemp(join(tmpdir(), 'case-board-'));
+  const boardHtml = '<!doctype html><body><div id="root"></div></body>';
+  const server = createCaseServer(store, boardHtml);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '1' });
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  t.after(async () => { await client.close(); store.close(); });
+  t.after(async () => { await client.close(); store.close(); await rm(directory, { recursive: true, force: true }); });
   const tools = (await client.listTools()).tools;
   assert.deepEqual(tools.map(({ name }) => name).sort(), [
-    'create_suite', 'get_run', 'list_suites', 'open_suite', 'record_run_results', 'start_run', 'update_suite',
+    'append_cases', 'create_suite', 'get_run', 'list_suites', 'open_suite', 'record_run_results', 'start_run', 'update_suite', 'workbench_panel',
   ]);
   const meta = tools.find(({ name }) => name === 'open_suite')?._meta as { ui: { resourceUri: string } };
   assert.equal(meta.ui.resourceUri, 'ui://test-case-workbench/board.html');
   const resource = (await client.readResource({ uri: meta.ui.resourceUri })).contents[0];
   assert.equal(resource.mimeType, 'text/html;profile=mcp-app');
-  const created = await client.callTool({ name: 'create_suite', arguments: sample });
+  const title = '邀请管理 </script><script>throw 0</script>';
+  const created = await client.callTool({ name: 'create_suite', arguments: { ...sample, title } });
   assert.equal(created.isError, undefined);
   const { suite } = created.structuredContent as SuiteView;
-  assert.equal(suite.title, sample.title);
+  assert.equal(suite.title, title);
   const opened = await client.callTool({ name: 'open_suite', arguments: { suiteId: suite.id } });
-  assert.deepEqual(opened.structuredContent, created.structuredContent);
+  const content = opened.structuredContent as SuiteView;
+  assert.deepEqual(content.suite, suite);
+  const boardPath = writeBoardFile(directory, boardHtml, content);
+  assert.equal(boardPath, join(directory, suite.id + '.html'));
+  const file = await readFile(boardPath, 'utf8');
+  assert.ok(!file.includes(title));
+  const data = file.match(/<script id="test-case-workbench-data" type="application\/json">([^]*?)<\/script>/)?.[1];
+  assert.ok(data);
+  assert.deepEqual(JSON.parse(data), created.structuredContent);
+  assert.equal(tools.find(({ name }) => name === 'append_cases')?.annotations?.destructiveHint, false);
+  const appended = await client.callTool({
+    name: 'append_cases', arguments: { suiteId: suite.id, revision: suite.revision, cases: sample.cases },
+  });
+  assert.deepEqual(appended.structuredContent, { suiteId: suite.id, revision: 2, count: 4 });
+  const panel = tools.find(({ name }) => name === 'workbench_panel');
+  assert.equal(panel?.title, '测试用例脑图');
+  assert.deepEqual(panel?._meta?.['openai/ui'], { entrypoints: [{ type: 'thread' }] });
+  assert.deepEqual(panel?._meta?.ui, { resourceUri: meta.ui.resourceUri, visibility: ['app'] });
+  const initial = await client.callTool({ name: 'workbench_panel' });
+  const suites = (initial.structuredContent as { suites: { id: string; count: number }[] }).suites;
+  assert.equal(suites[0].id, suite.id);
+  assert.equal(suites[0].count, 4);
 });

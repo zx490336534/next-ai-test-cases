@@ -135,14 +135,7 @@ pnpm start:local -p 3000
 
 ### 安装
 
-需要能运行本地插件的 Codex 和 Node.js 22.13 或更新版本。添加 GitHub 插件源后安装：
-
-~~~bash
-codex plugin marketplace add zx490336534/next-ai-test-cases --ref codex/plugin-marketplace
-codex plugin add test-case-workbench@next-ai-test-cases
-~~~
-
-也可从 [GitHub Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载 `codex-test-cases.zip`，解压后安装：
+需要能运行本地插件的 Codex 和 Node.js 22.13 或更新版本。从 [GitHub Releases](https://github.com/zx490336534/next-ai-test-cases/releases/latest) 下载最新的 `codex-test-cases.zip`，解压并安装：
 
 ~~~bash
 unzip codex-test-cases.zip -d codex-test-cases
@@ -150,13 +143,13 @@ codex plugin marketplace add ./codex-test-cases
 codex plugin add test-case-workbench@next-ai-test-cases
 ~~~
 
-这两种方式都安装到 Codex 的本地插件目录。因为插件使用本地 MCP 服务，进入 OpenAI 公共目录需要提交组织获批。 [桌面插件上架说明](https://developers.openai.com/plugins/deploy/desktop-only)
+该方式将插件安装到 Codex 的本地插件目录。因为插件使用本地 MCP 服务，进入 OpenAI 公共目录需要提交组织获批。 [桌面插件上架说明](https://developers.openai.com/plugins/deploy/desktop-only)
 
-在 Codex 本地聊天里提及「测试用例工作区」插件，或调用 `$test-case-workbench`。桌面端的脑图卡片需要客户端支持 MCP Apps。如果工具已加载但卡片没出现，可以在支持该功能开关的版本中运行 `codex features enable enable_mcp_apps`，随后重启客户端。仅支持聊天工具的客户端仍可在聊天里完整操作用例与执行批次。 [Codex 插件安装文档](https://developers.openai.com/plugins/build/plugins)
+在 Codex 本地聊天里提及「测试用例工作区」插件，或调用 `$test-case-workbench`。在支持 MCP Apps 的桌面客户端中，点当前聊天右侧标签栏的「＋ → 插件和 MCP → 测试用例脑图」，选择要打开的工作区。侧边入口无需先让模型生成卡片。升级后如仍显示旧入口，重新打开 Codex 客户端并进入本地聊天。 [官方会话面板说明](https://developers.openai.com/plugins/build/extensions)
 
 ### 使用
 
-- 生成。对 Codex 说「根据以下需求生成可手工执行的用例，保存并打开脑图」。可以同一轮提供测试仓库、测试环境、账号类型与已知限制。需求和这些上下文会随工作区保存。
+- 生成。对 Codex 说「根据以下需求生成可手工执行的用例，保存并打开脑图」。可以同一轮提供测试仓库、测试环境、账号类型与已知限制。需求和这些上下文会随工作区保存。工作区不限制用例总数。用例较多时，可以通过 `append_cases` 分批保存到同一个工作区。
 - 修改。可以对 Codex 说「把撤销邀请用例改成 P0，保留其余用例」，或在脑图中点击用例节点，也可从列表选择，随后打开「编辑用例」，保存后立即更新脑图。并行修改时按版本检查冲突。
 - 执行。在卡片勾选用例，点「交给 Codex 执行」。可在卡片填写测试目标，也可沿用聊天已给出的目标。客户端无法代发时，卡片会给出可粘贴到聊天的指令。也可以在聊天直接指定用例和环境。Codex 以当前会话可用且获授权的工具执行，记录实际观察、通过、失败或阻塞，并显示最近批次。
 - 续做。新会话可以从最近 50 个工作区中按标题恢复需求和用例。更早的工作区或执行批次可以凭对应 ID 打开。每个批次保存执行目标和选中用例当时的版本，后来编辑用例不会改写旧证据。

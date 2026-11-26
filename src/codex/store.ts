@@ -105,7 +105,7 @@ export function openCaseStore(path: string) {
           if (change.action === 'remove') cases.delete(change.caseId);
           else cases.set(change.caseId, validate({ ...existing, ...change.entry }));
         }
-        if (cases.size === 0 || cases.size > 120) throw new WorkspaceError('工作区需包含 1 到 120 条用例');
+        if (cases.size === 0) throw new WorkspaceError('工作区至少需包含一条用例');
         const suite: Suite = {
           ...current, ...input.details, cases: [...cases.values()],
           revision: current.revision + 1, updatedAt: new Date().toISOString(),
