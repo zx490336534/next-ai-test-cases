@@ -21,7 +21,7 @@ function result(action: () => Record<string, unknown>, description: string) {
 }
 
 export function createCaseServer(store: ReturnType<typeof openCaseStore>, boardHtml: string) {
-  const server = new McpServer({ name: 'test-case-workbench', version: '0.1.0' });
+  const server = new McpServer({ name: 'test-case-workbench', version: '0.1.1' });
   registerAppResource(server, '用例脑图', resourceUri, {}, async () => ({
     contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: boardHtml }],
   }));

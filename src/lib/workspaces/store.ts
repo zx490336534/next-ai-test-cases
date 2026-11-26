@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { titleFor } from './title';
 import { EMPTY_MAP } from '@/lib/agent/mindMap';
 import { RequestError } from '@/lib/agent/modelConfig';
-import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from './types';
+import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary, WorkspaceWrite } from './types';
 
 export function openWorkspaceStore(path: string) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -57,7 +57,7 @@ export function openWorkspaceStore(path: string) {
     const row = get.get(owner, id) as (WorkspaceSummary & { version: number; snapshot: string }) | undefined;
     if (!row) throw new RequestError('找不到这个会话', 404);
     const { snapshot, ...summary } = row;
-    return { ...summary, ...JSON.parse(snapshot) as WorkspaceSnapshot };
+    return { ...summary, ...JSON.parse(snapshot) as WorkspaceWrite };
   }
 
   function createSession(owner: string): SavedWorkspace {
@@ -73,7 +73,7 @@ export function openWorkspaceStore(path: string) {
     },
     get: getSession,
     create: createSession,
-    save(owner: string, id: string, version: number, snapshot: WorkspaceSnapshot) {
+    save(owner: string, id: string, version: number, snapshot: WorkspaceWrite) {
       const result = update.get(titleFor(snapshot), new Date().toISOString(), JSON.stringify(snapshot), owner, id, version);
       if (result) return result as WorkspaceSummary & { version: number };
       if (!get.get(owner, id)) throw new RequestError('找不到这个会话', 404);

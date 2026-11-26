@@ -9,6 +9,7 @@ export const reorderSchema = z.object({ id: z.uuid(), targetId: z.uuid(), placem
 
 const saveSchema = z.object({
   version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  writeId: z.uuid().optional(),
   messages: z.array(z.unknown()),
   mindMap: mindMapSchema,
 });
@@ -16,8 +17,8 @@ const saveSchema = z.object({
 export async function validateWorkspaceSave(raw: unknown) {
   const parsed = saveSchema.safeParse(raw);
   if (!parsed.success) throw new RequestError('无效的会话数据', 400);
-  const { messages, mindMap, version } = parsed.data;
+  const { messages, mindMap, version, writeId } = parsed.data;
   const result = messages.length ? await safeValidateUIMessages<ConversationMessage>({ messages, metadataSchema: conversationMetadataSchema }) : { success: true as const, data: [] };
   if (!result.success) throw new RequestError('会话消息格式无效', 400);
-  return { version, snapshot: { messages: result.data, mindMap } };
+  return { version, snapshot: { messages: result.data, mindMap, ...(writeId && { writeId }) } };
 }

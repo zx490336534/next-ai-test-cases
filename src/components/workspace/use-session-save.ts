@@ -1,65 +1,143 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from '@/lib/workspaces/types';
-import { sessionRequest } from './session-client';
+import { SessionRequestError, sessionRequest } from './session-client';
+import { acknowledgedWrite, newWorkspaceWriteId, workspaceSnapshot, writeWorkspaceDraft } from './workspace-draft';
 
-export function useSessionSave(session: SavedWorkspace, snapshot: WorkspaceSnapshot, onSaved: (summary: WorkspaceSummary) => void) {
-  const [status, setStatus] = useState<'saving' | 'saved' | 'error'>('saved');
+export function useSessionSave(
+  session: SavedWorkspace, snapshot: WorkspaceSnapshot, onSaved: (summary: WorkspaceSummary) => void,
+  { initialWriteIds, protectDraft, capture }: {
+    initialWriteIds?: string[];
+    protectDraft?: boolean;
+    capture?: (snapshot: WorkspaceSnapshot) => WorkspaceSnapshot | undefined;
+  } = {},
+) {
+  const [confirmed, setConfirmed] = useState(() => JSON.stringify(workspaceSnapshot(session)));
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(Boolean(initialWriteIds?.length));
+  const serialized = useMemo(() => JSON.stringify(snapshot), [snapshot]);
   const version = useRef(session.version);
-  const lastSaved = useRef(JSON.stringify({ messages: session.messages, mindMap: session.mindMap }));
+  const lastSaved = useRef(confirmed);
+  const writing = useRef<string | undefined>(undefined);
+  const previousPageWrites = useRef(initialWriteIds ?? []);
+  const recoveryAvailable = useRef(true);
+  const mounted = useRef(true);
   const pending = useRef<Promise<boolean> | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const latest = useRef(snapshot);
+  const latest = useRef({ snapshot, serialized });
 
-  const flush = useCallback((value = latest.current, keepalive = false) => {
+  const syncDraft = useCallback(() => {
+    if (!mounted.current) return;
+    const writeIds = [...previousPageWrites.current, ...(writing.current ? [writing.current] : [])];
+    const dirty = latest.current.serialized !== lastSaved.current || writeIds.length > 0;
+    recoveryAvailable.current = !protectDraft && writeWorkspaceDraft(session.id, dirty ? {
+      version: version.current, writeIds, snapshot: latest.current.snapshot,
+    } : undefined);
+  }, [protectDraft, session.id]);
+
+  const flush = useCallback((value?: WorkspaceSnapshot, keepalive = false) => {
     clearTimeout(timer.current);
-    const serialized = JSON.stringify(value);
-    const save = async () => {
-      if (serialized === lastSaved.current) return true;
-      setStatus('saving');
+    if (value) latest.current = { snapshot: value, serialized: JSON.stringify(value) };
+    syncDraft();
+
+    async function put(draft: WorkspaceSnapshot, writeId: string) {
+      const body = JSON.stringify({ version: version.current, writeId, ...draft });
+      return sessionRequest<WorkspaceSummary & { version: number }>(session.id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body,
+        keepalive: keepalive && new TextEncoder().encode(body).length <= 60 * 1024,
+      });
+    }
+
+    const save = async (retry = true): Promise<boolean> => {
+      const value = latest.current;
+      if (value.serialized === lastSaved.current && !writing.current && !previousPageWrites.current.length) return true;
+      const writeId = writing.current ??= newWorkspaceWriteId();
+      syncDraft();
+      setSaving(true);
       setError('');
       try {
-        const body = JSON.stringify({ version: version.current, ...value });
-        const saved = await sessionRequest<WorkspaceSummary & { version: number }>(session.id, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body,
-          keepalive: keepalive && new TextEncoder().encode(body).length <= 60 * 1024,
-        });
+        const saved = await put(value.snapshot, writeId);
         version.current = saved.version;
-        lastSaved.current = serialized;
+        lastSaved.current = value.serialized;
+        writing.current = undefined;
+        previousPageWrites.current = [];
+        syncDraft();
         onSaved(saved);
-        setStatus('saved');
+        setConfirmed(value.serialized);
         return true;
       } catch (cause) {
-        setStatus('error');
+        if (retry && !keepalive && cause instanceof SessionRequestError && cause.status === 409) {
+          const saved = await sessionRequest<SavedWorkspace>(session.id).catch(() => undefined);
+          if (saved && acknowledgedWrite(saved, version.current, [...previousPageWrites.current, writeId])) {
+            version.current = saved.version;
+            lastSaved.current = JSON.stringify(workspaceSnapshot(saved));
+            writing.current = undefined;
+            previousPageWrites.current = [];
+            syncDraft();
+            onSaved(saved);
+            setConfirmed(lastSaved.current);
+            return await save(false);
+          }
+        }
         setError(cause instanceof Error ? cause.message : '会话保存失败，请重试');
         return false;
+      } finally {
+        setSaving(false);
       }
     };
-    const task = pending.current ? pending.current.then(save) : save();
+
+    const task = pending.current ? pending.current.then(() => save()) : save();
     pending.current = task;
     void task.then(() => {
       if (pending.current === task) pending.current = undefined;
     });
     return task;
-  }, [session.id, onSaved]);
+  }, [session.id, onSaved, syncDraft]);
 
-  useEffect(() => {
-    latest.current = snapshot;
-    if (pending.current || JSON.stringify(snapshot) !== lastSaved.current) {
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useLayoutEffect(() => {
+    latest.current = { snapshot, serialized };
+    syncDraft();
+    if (pending.current || writing.current || previousPageWrites.current.length || serialized !== lastSaved.current) {
       timer.current = setTimeout(() => { void flush(); }, 250);
     }
     return () => clearTimeout(timer.current);
-  }, [snapshot, flush]);
+  }, [snapshot, serialized, flush, syncDraft]);
 
   useEffect(() => {
+    function captureEditor() {
+      const current = capture?.(latest.current.snapshot);
+      if (current) {
+        latest.current = { snapshot: current, serialized: JSON.stringify(current) };
+        syncDraft();
+      }
+    }
     const saveBeforeLeaving = () => {
-      if (document.visibilityState === 'hidden') void flush(undefined, true);
+      if (document.visibilityState === 'hidden') {
+        captureEditor();
+        void flush(undefined, true);
+      }
+    };
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      captureEditor();
+      if (!recoveryAvailable.current && (writing.current || previousPageWrites.current.length || latest.current.serialized !== lastSaved.current)) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
     };
     document.addEventListener('visibilitychange', saveBeforeLeaving);
-    return () => document.removeEventListener('visibilitychange', saveBeforeLeaving);
-  }, [flush]);
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => {
+      document.removeEventListener('visibilitychange', saveBeforeLeaving);
+      window.removeEventListener('beforeunload', warnBeforeLeaving);
+    };
+  }, [capture, flush, syncDraft]);
 
+  const status = error ? 'error' : saving || serialized !== confirmed ? 'saving' : 'saved';
   return { status, error, flush };
 }

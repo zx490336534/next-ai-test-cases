@@ -11,6 +11,7 @@ type Props = {
   readOnly?: boolean;
   compact?: boolean;
   onSelectionChange?: (id: string | null) => void;
+  onNodeClick?: (id: string) => void;
   onScaleChange?: (scalePercent: number) => void;
 };
 
@@ -61,6 +62,7 @@ type MindMapEventHandlers = {
   handleScale: (scale: number) => void;
   handleSelection: (node: MindMapNodeLike | null, nodes: MindMapNodeLike[]) => void;
   handleNodeTreeRenderEnd: () => void;
+  handleNodeClick: (node: MindMapNodeLike) => void;
   handleNodeTagClick: (node: MindMapNodeLike, item: MindMapTagItem) => void;
 };
 
@@ -104,12 +106,14 @@ type MindMapInstance = {
   on?: {
     (eventName: 'scale', handler: (scale: number) => void): void;
     (eventName: 'node_active', handler: MindMapEventHandlers['handleSelection']): void;
+    (eventName: 'node_click', handler: MindMapEventHandlers['handleNodeClick']): void;
     (eventName: 'node_tag_click', handler: (node: MindMapNodeLike, item: MindMapTagItem) => void): void;
     (eventName: string, handler: (...args: unknown[]) => void): void;
   };
   off?: {
     (eventName: 'scale', handler: (scale: number) => void): void;
     (eventName: 'node_active', handler: MindMapEventHandlers['handleSelection']): void;
+    (eventName: 'node_click', handler: MindMapEventHandlers['handleNodeClick']): void;
     (eventName: 'node_tag_click', handler: (node: MindMapNodeLike, item: MindMapTagItem) => void): void;
     (eventName: string, handler?: (...args: unknown[]) => void): void;
   };
@@ -199,7 +203,7 @@ function extractRootData(rawData: unknown) {
 }
 
 export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMapView(
-  { data, onChange, onScaleChange, onSelectionChange, readOnly = false, compact = false },
+  { data, onChange, onScaleChange, onSelectionChange, onNodeClick, readOnly = false, compact = false },
   ref,
 ) {
   const gestureRef = useRef<{ x: number; y: number; distance: number | null } | null>(null);
@@ -209,6 +213,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
   const onChangeRef = useRef(onChange);
   const onScaleChangeRef = useRef(onScaleChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
+  const onNodeClickRef = useRef(onNodeClick);
   const selectionRef = useRef<MindMapNodeLike[]>([]);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -229,11 +234,12 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     onChangeRef.current = onChange;
     onScaleChangeRef.current = onScaleChange;
     onSelectionChangeRef.current = onSelectionChange;
+    onNodeClickRef.current = onNodeClick;
     currentDataRef.current = data || EMPTY_MAP;
     normalizedDataRef.current = normalizedData;
     readOnlyRef.current = readOnly;
     instanceRef.current?.setMode?.(readOnly ? 'readonly' : 'edit');
-  }, [data, normalizedData, onChange, onScaleChange, onSelectionChange, readOnly]);
+  }, [data, normalizedData, onChange, onScaleChange, onSelectionChange, onNodeClick, readOnly]);
 
   const read = useCallback(() => {
     if (!instanceRef.current) return undefined;
@@ -479,6 +485,11 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           onSelectionChangeRef.current?.(typeof uid === 'string' ? uid : null);
         };
 
+        const handleNodeClick = (node: MindMapNodeLike) => {
+          const uid = node.nodeData?.data?.uid ?? node.data?.uid;
+          if (typeof uid === 'string') onNodeClickRef.current?.(uid);
+        };
+
         const handleNodeTreeRenderEnd = () => {
           if (!fitPendingAfterRenderRef.current) return;
           fitPendingAfterRenderRef.current = false;
@@ -524,7 +535,8 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current.on?.('node_tree_render_end', handleNodeTreeRenderEnd);
         instanceRef.current.on?.('node_tag_click', handleNodeTagClick);
         instanceRef.current.on?.('node_active', handleSelection);
-        instanceRef.current.__handlers = { handleDataChange, handleScale, handleNodeTreeRenderEnd, handleNodeTagClick, handleSelection };
+        instanceRef.current.on?.('node_click', handleNodeClick);
+        instanceRef.current.__handlers = { handleDataChange, handleScale, handleNodeTreeRenderEnd, handleNodeTagClick, handleSelection, handleNodeClick };
 
         syncScale();
         scheduleFit(true);
@@ -586,6 +598,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           instanceRef.current.off?.('node_tree_render_end', handlers.handleNodeTreeRenderEnd);
           instanceRef.current.off?.('node_tag_click', handlers.handleNodeTagClick);
           instanceRef.current.off?.('node_active', handlers.handleSelection);
+          instanceRef.current.off?.('node_click', handlers.handleNodeClick);
         }
         instanceRef.current.destroy?.();
         instanceRef.current = null;

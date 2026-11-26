@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "test-case-workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "在 Codex 中生成、编辑和按证据执行测试用例，配套交互脑图。",
   "extensions": {
     "com.openai": {

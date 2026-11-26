@@ -1,5 +1,6 @@
 'use client';
 
+import { download } from '@/lib/client/download';
 import { workspaceFetch } from '@/lib/client/runtime';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
@@ -13,14 +14,6 @@ import type { SavedWorkspace } from '@/lib/workspaces/types';
 
 type Pending = { retry: RetryRequest; extensions: Extensions; errors: string[] };
 type Run = { incomplete?: ConversationMessage; staleReply?: ConversationMessage; staleEdit?: boolean; startedAt: number; extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
-
-function download(blob: Blob, name: string) {
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = name;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-}
 
 export function useCaseWorkspace(
   session: SavedWorkspace, settings: ModelSettings, extensions: Extensions,

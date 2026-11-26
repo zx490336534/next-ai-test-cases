@@ -7,7 +7,7 @@ import { buildMindMap } from '../lib/agent/mindMap';
 import type { TestCaseItem } from '../lib/agent/types';
 import type { CaseFields, Outcome, SuiteView } from './contracts';
 
-const app = new App({ name: '测试用例工作区', version: '0.1.0' });
+const app = new App({ name: '测试用例工作区', version: '0.1.1' });
 const verdicts: Record<Outcome['status'], string> = { passed: '通过', failed: '失败', blocked: '阻塞', skipped: '跳过' };
 const actions = 'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-[#d5e5df] bg-white px-3 py-1.5 text-sm font-medium text-[#174842] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#267168] disabled:opacity-45';
 const fieldClass = 'w-full min-w-0 rounded-lg border border-[#cadcd6] bg-white px-3 py-2 text-base focus:outline-2 focus:outline-[#267168]';
@@ -50,6 +50,12 @@ function Board() {
   const active = suite?.cases.find(({ id }) => id === activeId);
   const scope = suite?.cases.map(({ id }) => id).filter((id) => selected.includes(id)) ?? [];
 
+  const executionPrompt = suite && scope.length ? [
+    '请使用测试用例工作区技能执行所选用例，严格按以下范围创建执行批次，并回写实际证据。',
+    '工作区 ID：' + suite.id, '用例版本：' + suite.revision, '用例 ID：' + scope.join('、'),
+    ...(target.trim() ? ['执行目标：' + target.trim()] : ['沿用会话中已明确的执行目标，目标未确定时请先确认。']),
+  ].join('\n') : '';
+
   async function update(name: string, args: Record<string, unknown>) {
     setPending(true);
     setFailure('');
@@ -88,22 +94,18 @@ function Board() {
   }
 
   async function sendSelection() {
-    if (!suite || !scope.length || pending) return;
+    if (!executionPrompt || pending) return;
     setPending(true);
     setNotice('');
     setFailure('');
     setFallback('');
-    const message = [
-      '请使用测试用例工作区技能执行所选用例，严格按以下范围创建执行批次，并回写实际证据。',
-      '工作区 ID：' + suite.id, '用例版本：' + suite.revision, '用例 ID：' + scope.join('、'),
-      ...(target.trim() ? ['执行目标：' + target.trim()] : ['沿用会话中已明确的执行目标，目标未确定时请先确认。']),
-    ].join('\n');
+
     try {
-      const sent = await app.sendMessage({ role: 'user', content: [{ type: 'text', text: message }] }, { timeout: 6000 });
+      const sent = await app.sendMessage({ role: 'user', content: [{ type: 'text', text: executionPrompt }] }, { timeout: 6000 });
       if (sent.isError) throw new Error('宿主未接收消息');
       setNotice('已交给 Codex，实际结果会记录在执行批次里。');
     } catch {
-      setFallback(message);
+      setFallback(executionPrompt);
     } finally {
       setPending(false);
     }
@@ -137,7 +139,7 @@ function Board() {
               <button className={actions} type="button" aria-label="放大脑图" onClick={() => map.current?.zoomIn()}><ZoomIn aria-hidden="true" className="h-4 w-4" /></button>
             </div>
             <div className="h-72 @min-[720px]:h-[26rem]">
-              <MindMapView key={suite.id} ref={map} data={tree} readOnly compact onSelectionChange={(nodeId) => {
+              <MindMapView key={suite.id} ref={map} data={tree} readOnly compact onNodeClick={(nodeId) => {
                 const item = nodeId && suite.cases.find(({ id }) => nodeId === id || nodeId.startsWith(id + '-'));
                 if (item) setActiveId(item.id);
               }} />
@@ -183,7 +185,7 @@ function Board() {
         <div className="space-y-2 px-4 pb-4 text-sm">
           {notice && <p role="status" className="text-[#176454]">{notice}</p>}
           {failure && !editing && <p role="alert" className="text-red-700">{failure}</p>}
-          {fallback && <label className="block text-sm text-slate-700">当前客户端无法代发消息。把下面的指令粘贴到 Codex 聊天即可执行所选用例。
+          {fallback && fallback === executionPrompt && <label className="block text-sm text-slate-700">当前客户端无法代发消息。把下面的指令粘贴到 Codex 聊天即可执行所选用例。
             <textarea className={fieldClass + ' mt-1 resize-y'} rows={5} readOnly value={fallback} onFocus={(event) => event.currentTarget.select()} />
           </label>}
           {run && <details className="rounded-lg border border-[#dce9e4] px-3 py-2">

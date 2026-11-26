@@ -95,7 +95,7 @@ export function ModelSettingsDialog({ settings, onChange }: {
         const data = await response.json().catch(() => null);
         throw new Error(data?.error ?? '连接失败');
       }
-      setStatus('连接成功。');
+      if (testRequest.current === request && !request.signal.aborted) setStatus('连接成功。');
     } catch (error) {
       if (!request.signal.aborted) setStatus(error instanceof Error ? error.message : '连接失败');
     } finally {
@@ -133,15 +133,15 @@ export function ModelSettingsDialog({ settings, onChange }: {
           </div>
           <label className="block space-y-1 text-sm font-medium">
             <span>模型名</span>
-            <Input autoFocus value={draft.model ?? ''} maxLength={180} onChange={(event) => setField('model', event.target.value)} placeholder="gpt-4.1-mini" />
+            <Input autoFocus disabled={testing} value={draft.model ?? ''} maxLength={180} onChange={(event) => setField('model', event.target.value)} placeholder="gpt-4.1-mini" />
           </label>
           <label className="block space-y-1 text-sm font-medium">
             <span>Base URL</span>
-            <Input type="url" value={draft.baseUrl ?? ''} maxLength={2048} onChange={(event) => setField('baseUrl', event.target.value)} placeholder="https://api.openai.com/v1" />
+            <Input type="url" disabled={testing} value={draft.baseUrl ?? ''} maxLength={2048} onChange={(event) => setField('baseUrl', event.target.value)} placeholder="https://api.openai.com/v1" />
           </label>
           <label className="block space-y-1 text-sm font-medium">
             <span>API Key</span>
-            <Input type="password" autoComplete="off" value={draft.apiKey ?? ''} maxLength={2048} onChange={(event) => setField('apiKey', event.target.value)} placeholder="输入所选网关的密钥" />
+            <Input type="password" disabled={testing} autoComplete="off" value={draft.apiKey ?? ''} maxLength={2048} onChange={(event) => setField('apiKey', event.target.value)} placeholder="输入所选网关的密钥" />
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useSyncExternalStore, type ReactNode } from 'react';
 import { History, MessageSquare, PanelLeftOpen, PanelRightOpen, Workflow } from 'lucide-react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 
@@ -14,13 +14,17 @@ const views = [
   { id: 'history', label: '历史', Icon: History },
 ] as const;
 
-function subscribe(listener: () => void) {
-  const media = window.matchMedia(compactMedia);
-  media.addEventListener('change', listener);
-  return () => media.removeEventListener('change', listener);
-}
+export function useCompactWorkspace(beforeLayoutChange: () => void) {
+  const subscribe = useCallback((listener: () => void) => {
+    const media = window.matchMedia(compactMedia);
+    const onChange = () => {
+      beforeLayoutChange();
+      listener();
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [beforeLayoutChange]);
 
-export function useCompactWorkspace() {
   return useSyncExternalStore(subscribe, () => window.matchMedia(compactMedia).matches, () => false);
 }
 

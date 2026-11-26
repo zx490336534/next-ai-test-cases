@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { GET as listSessions, PATCH as orderSessions, POST as createSession } from '../src/app/api/test-case-agent/sessions/route';
 import { DELETE as deleteSession, GET as getSession, PATCH as renameSession, PUT as saveSession } from '../src/app/api/test-case-agent/sessions/[id]/route';
+import { newWorkspaceWriteId, recoverWorkspaceDraft } from '../src/components/workspace/workspace-draft';
 import { EMPTY_MAP } from '../src/lib/agent/mindMap';
 import { openWorkspaceStore, workspaceStore } from '../src/lib/workspaces/store';
 import type { WorkspaceSnapshot } from '../src/lib/workspaces/types';
@@ -47,6 +49,27 @@ test('SQLite reopens saved chat and map, lists only the owner’s sessions, and 
   }
 });
 
+test('only replays a tab draft against its original revision or its own acknowledged write', () => {
+  const store = openWorkspaceStore(':memory:');
+  try {
+    const session = store.create('browser-a');
+    const writeId = newWorkspaceWriteId();
+    assert.match(writeId, /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
+    const draft = { version: session.version, writeIds: [writeId, randomUUID()], snapshot };
+    assert.deepEqual(recoverWorkspaceDraft(session, draft), { recovered: draft });
+    store.save('browser-a', session.id, session.version, { ...snapshot, writeId });
+    const saved = store.get('browser-a', session.id);
+    assert.deepEqual(recoverWorkspaceDraft(saved, draft), { recovered: draft });
+    assert.deepEqual(recoverWorkspaceDraft(saved, { ...draft, writeIds: [randomUUID()] }).conflict?.snapshot, snapshot);
+    store.save('browser-a', session.id, saved.version, snapshot);
+    const otherWrite = store.get('browser-a', session.id);
+    assert.equal(otherWrite.writeId, undefined);
+    assert.deepEqual(recoverWorkspaceDraft(otherWrite, draft), { conflict: draft });
+  } finally {
+    store.close();
+  }
+});
+
 test('session routes scope persistence to a browser cookie and validate AI SDK messages', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'case-workspaces-http-'));
   const previous = process.env.TEST_CASES_DB_PATH;
@@ -82,8 +105,9 @@ test('session routes scope persistence to a browser cookie and validate AI SDK m
     method: 'PUT', headers: { cookie: owner }, body: JSON.stringify({ version: 0, ...snapshot, messages: [{ parts: [{}] }] }),
   }), context);
   assert.equal(invalid.status, 400);
+  const writeId = randomUUID();
   const valid = await saveSession(new Request(url, {
-    method: 'PUT', headers: { cookie: owner }, body: JSON.stringify({ version: 0, ...snapshot, settings: { apiKey: 'fixture-only' } }),
+    method: 'PUT', headers: { cookie: owner }, body: JSON.stringify({ version: 0, ...snapshot, writeId, settings: { apiKey: 'fixture-only' } }),
   }), context);
   assert.equal(valid.status, 200);
   const restored = await getSession(new Request(url, { headers: { cookie: owner } }), context);
@@ -91,6 +115,7 @@ test('session routes scope persistence to a browser cookie and validate AI SDK m
   assert.equal(actual.title, '团队邀请验收');
   assert.deepEqual(actual.messages, snapshot.messages);
   assert.deepEqual(actual.mindMap, snapshot.mindMap);
+  assert.equal(actual.writeId, writeId);
   assert.equal(actual.settings, undefined);
   const foreign = await getSession(new Request(url, { headers: { cookie: stranger } }), context);
   assert.equal(foreign.status, 404);

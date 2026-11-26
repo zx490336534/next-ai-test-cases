@@ -104,7 +104,7 @@ export async function browserHistory(request: Request, id?: string) {
     if (change) {
       if (entry.version !== change.version) throw new RequestError('此会话已在其他标签页更新。请刷新后继续。', 409);
       const next = {
-        ...entry, ...change.snapshot, title: titleFor(change.snapshot),
+        ...entry, ...change.snapshot, writeId: change.snapshot.writeId, title: titleFor(change.snapshot),
         version: entry.version + 1, updatedAt: new Date().toISOString(),
       };
       sessions[index] = next;

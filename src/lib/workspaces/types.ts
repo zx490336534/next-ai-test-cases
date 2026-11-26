@@ -6,13 +6,15 @@ export type WorkspaceSnapshot = {
   mindMap: MindMapNode;
 };
 
+export type WorkspaceWrite = WorkspaceSnapshot & { writeId?: string };
+
 export type WorkspaceSummary = {
   id: string;
   title: string;
   updatedAt: string;
 };
 
-export type SavedWorkspace = WorkspaceSummary & WorkspaceSnapshot & {
+export type SavedWorkspace = WorkspaceSummary & WorkspaceWrite & {
   version: number;
 };
 

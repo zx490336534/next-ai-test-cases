@@ -35,12 +35,14 @@ import { useCaseWorkspace } from '@/components/workspace/use-case-workspace';
 import { SessionHistory } from '@/components/workspace/session-history';
 import { WorkspacePanels, WorkspaceViews, useCompactWorkspace, type WorkspaceView } from '@/components/workspace/workspace-panels';
 import { sessionRequest } from '@/components/workspace/session-client';
+import { recoverWorkspaceDraft, writeWorkspaceDraft } from '@/components/workspace/workspace-draft';
+import { download } from '@/lib/client/download';
 import { useSessionSave } from '@/components/workspace/use-session-save';
 import { standalone } from '@/lib/client/runtime';
 import { normalizeMindMap } from '@/lib/agent/mindMap';
 import type { Extensions, TextSkill } from '@/lib/agent/extensionContracts';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
-import type { RemovedWorkspace, SavedWorkspace, WorkspaceSummary } from '@/lib/workspaces/types';
+import type { RemovedWorkspace, SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from '@/lib/workspaces/types';
 
 const sessionKey = 'next-ai-test-cases:open-session';
 
@@ -121,6 +123,7 @@ export default function Page() {
   async function removeSession(id: string, active: boolean) {
     const query = active ? new URLSearchParams({ selectNext: '1' }) : undefined;
     const result = await sessionRequest<RemovedWorkspace>(id, { method: 'DELETE' }, query);
+    writeWorkspaceDraft(id);
     setHistory(result.sessions);
     if (result.nextSession) select(result.nextSession);
   }
@@ -171,20 +174,41 @@ function Workspace({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const readEditor = useCallback(() => mindMapRef.current?.read(), []);
   const isEditorEditing = useCallback(() => mindMapRef.current?.isEditing() ?? false, []);
-  const workspace = useCaseWorkspace(session, settings, extensions, readEditor, isEditorEditing);
+  const [draft] = useState(() => recoverWorkspaceDraft(session));
+  const [protectDraft, setProtectDraft] = useState(Boolean(draft.conflict));
+  const workspace = useCaseWorkspace({ ...session, ...draft.recovered?.snapshot }, settings, extensions, readEditor, isEditorEditing);
   const {
     mindMap, messages: messageList, error, setError, warning, stats: mindMapStats,
     progress: loadingMessage, exporting: loadingExportXmind, exportCsv, exportXmind,
   } = workspace;
   const snapshot = useMemo(() => ({ messages: messageList, mindMap }), [mindMap, messageList]);
-  const persistence = useSessionSave(session, snapshot, remember);
+  const finishActiveEdit = useCallback(() => {
+    const editor = mindMapRef.current;
+    if (!editor?.isEditing()) return;
+    editor.finishTextEdit();
+    return editor.read();
+  }, []);
+  const commitMap = workspace.commitMap;
+  const commitActiveEdit = useCallback(() => {
+    const tree = finishActiveEdit();
+    if (tree) commitMap(tree);
+  }, [finishActiveEdit, commitMap]);
+  const capture = useCallback((latest: WorkspaceSnapshot) => {
+    const tree = finishActiveEdit();
+    return tree ? { ...latest, mindMap: normalizeMindMap(tree) } : undefined;
+  }, [finishActiveEdit]);
+  const persistence = useSessionSave(session, snapshot, remember, {
+    initialWriteIds: draft.recovered?.version === session.version ? draft.recovered.writeIds : undefined,
+    protectDraft,
+    capture,
+  });
   const title = history.find(({ id }) => id === session.id)?.title ?? session.title;
   const [switching, setSwitching] = useState(false);
   const [selection, setSelection] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [scalePercent, setScalePercent] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const compact = useCompactWorkspace();
+  const compact = useCompactWorkspace(commitActiveEdit);
   const [view, selectView] = useState<WorkspaceView>(() => session.mindMap.children.length ? 'canvas' : 'chat');
   const chatVisible = compact ? view === 'chat' : isChatOpen;
 
@@ -259,7 +283,7 @@ function Workspace({
     if (loadingChat || switching) return;
     setSwitching(true);
     try {
-      const current = readEditor();
+      const current = finishActiveEdit() ?? readEditor();
       const saved = await persistence.flush(current ? { ...snapshot, mindMap: normalizeMindMap(current) } : snapshot);
       if (saved) await openSession(id);
     } catch (cause) {
@@ -290,7 +314,7 @@ function Workspace({
   }
 
   function changeView(next: WorkspaceView) {
-    if (view === 'canvas' && next !== 'canvas') mindMapRef.current?.finishTextEdit();
+    if (view === 'canvas' && next !== 'canvas') commitActiveEdit();
     selectView(next);
   }
 
@@ -468,6 +492,20 @@ function Workspace({
             </div>
           ) : null}
         </CardHeader>
+        {protectDraft && draft.conflict && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p role="alert">会话已在其他标签页更新，本页保留了未合并的草稿。</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              download(new Blob([JSON.stringify(draft.conflict?.snapshot, null, 2)], { type: 'application/json' }), 'workspace-draft.json');
+            }}>下载本页草稿</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              if (window.confirm('放弃本页未合并的草稿？')) {
+                writeWorkspaceDraft(session.id);
+                setProtectDraft(false);
+              }
+            }}>放弃本页草稿</Button>
+          </div>
+        )}
         <CardContent className="mt-0 min-h-0 min-w-0 flex-1 p-2 lg:p-3">
           <WorkspacePanels
             compact={compact} view={view}
