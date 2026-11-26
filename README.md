@@ -158,7 +158,9 @@ codex plugin add test-case-workbench@next-ai-test-cases
 
 ### 脑图、编辑与执行记录
 
-这些界面截图使用合成的团队邀请用例。
+![Codex 聊天与右侧的测试用例脑图，已选中三条用例](doc/img/codex-side-panel.png)
+
+以下三张操作示例截图使用合成的团队邀请用例。
 
 | 脑图与所选用例 |
 | --- |
