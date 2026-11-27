@@ -7,6 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { writeBoardFile } from '../src/codex/board-file';
+import { setCasesChecked } from '../src/codex/case-selection';
 import { createCaseServer } from '../src/codex/server';
 import { createSuiteInput, editSuiteInput, recordRunInput, startRunInput, type SuiteView } from '../src/codex/contracts';
 import { openCaseStore } from '../src/codex/store';
@@ -22,6 +23,17 @@ const sample = {
       precondition: '存在未接受的邀请', steps: '1. 打开邀请', expected: '1. 显示有效邀请' },
   ],
 };
+
+test('filtered case selection affects visible matches and preserves choices from other filters', () => {
+  const [revoked, valid, hidden] = [{ id: 'revoked' }, { id: 'valid' }, { id: 'hidden' }];
+  const selected = setCasesChecked(new Set(), [revoked], true);
+  assert.deepEqual([...selected], ['revoked']);
+  const both = setCasesChecked(selected, [valid], true);
+  assert.deepEqual([...both], ['revoked', 'valid']);
+  assert.deepEqual(setCasesChecked(both, [revoked, valid], true), both);
+  assert.deepEqual([...setCasesChecked(both, [valid, hidden], false)], ['revoked']);
+  assert.deepEqual(setCasesChecked(both, [], false), both);
+});
 
 test('Codex edits use revisions, stable case IDs, and atomic validation', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'case-plugin-'));
@@ -145,6 +157,21 @@ test('MCP tools expose a board resource and persist a generated suite', async (t
     name: 'append_cases', arguments: { suiteId: suite.id, revision: suite.revision, cases: sample.cases },
   });
   assert.deepEqual(appended.structuredContent, { suiteId: suite.id, revision: 2, count: 4 });
+  const caseIds = suite.cases.map(({ id }) => id);
+  const started = await client.callTool({
+    name: 'start_run', arguments: { suiteId: suite.id, revision: 2, caseIds, target: '测试环境' },
+  });
+  const { run } = started.structuredContent as { run: { id: string } };
+  const ids = { suiteId: suite.id, runId: run.id };
+  const evidence = { caseId: caseIds[0], status: 'passed', evidence: '已显示链接失效。' };
+  for (const outcomes of [[evidence, evidence], [evidence]]) {
+    const receipt = await client.callTool({ name: 'record_run_results', arguments: { ...ids, outcomes } });
+    assert.deepEqual(receipt.structuredContent, { ...ids, caseIds: [caseIds[0]], recorded: 1, total: 2 });
+  }
+  const recovered = await client.callTool({ name: 'get_run', arguments: ids });
+  const stored = (recovered.structuredContent as { run: { cases: unknown[]; outcomes: unknown[] } }).run;
+  assert.deepEqual(stored.cases, suite.cases);
+  assert.deepEqual(stored.outcomes, [evidence]);
   const panel = tools.find(({ name }) => name === 'workbench_panel');
   assert.equal(panel?.title, '测试用例脑图');
   assert.deepEqual(panel?._meta?.['openai/ui'], { entrypoints: [{ type: 'thread' }] });

@@ -47,9 +47,18 @@ export function checkRequestOrigin(request: Request) {
     }
     return;
   }
-  if (origin && (origin !== url.origin || request.headers.get('sec-fetch-site') === 'cross-site')) {
-    throw new RequestError('仅接受同源请求', 403);
+  if (request.headers.get('sec-fetch-site') === 'cross-site') throw new RequestError('仅接受同源请求', 403);
+  if (!origin || origin === url.origin) return;
+
+  // Next may expose localhost as the internal URL even when the browser opened 127.0.0.1.
+  const loopback = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
+  if (loopback.test(url.host) && loopback.test(host) && origin === url.protocol + '//' + host) return;
+  const configured = process.env.TEST_CASES_PUBLIC_ORIGIN?.trim();
+  if (configured && URL.canParse(configured)) {
+    const publicUrl = new URL(configured);
+    if (['http:', 'https:'].includes(publicUrl.protocol) && publicUrl.href === publicUrl.origin + '/' && origin === publicUrl.origin) return;
   }
+  throw new RequestError('仅接受同源请求', 403);
 }
 
 export function resolveModelSettings(overrides: ModelSettings = {}): ModelConfig {

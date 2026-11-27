@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { MindMapView, type MindMapViewHandle } from '../components/mindmap/mindmap-view';
 import { buildMindMap, EMPTY_MAP, stripCategory } from '../lib/agent/mindMap';
 import type { TestCaseItem } from '../lib/agent/types';
+import { setCasesChecked } from './case-selection';
 import type { CaseFields, Outcome, SuiteListItem, SuiteView } from './contracts';
 
 const app = new App({ name: '测试用例工作区', version: '0.1.2' });
@@ -34,7 +35,7 @@ function Board() {
   const [activeId, setActiveId] = useState('');
   const [category, setCategory] = useState('');
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState('');
   const [failure, setFailure] = useState('');
@@ -80,7 +81,7 @@ function Board() {
     children: categories.map(({ name, count, id }) => ({ data: { text: name + '（' + count + '）', id, uid: id }, children: [] })),
   } : buildMindMap(matching, (entry) => entry.id), [suite, overview, categories, matching]);
   const active = suite?.cases.find(({ id }) => id === activeId);
-  const selectedIds = useMemo(() => new Set(selected), [selected]);
+  const allMatchingSelected = matching.length > 0 && matching.every(({ id }) => selectedIds.has(id));
   const scope = suite?.cases.map(({ id }) => id).filter((id) => selectedIds.has(id)) ?? [];
   const outcomes = useMemo(() => new Map(run?.outcomes.map((outcome) => [outcome.caseId, outcome])), [run]);
 
@@ -157,7 +158,7 @@ function Board() {
           <button type="button" className={actions + ' w-full justify-between text-left'} disabled={pending}
             onClick={() => {
               setActiveId('');
-              setSelected([]);
+              setSelectedIds(new Set());
               setTarget('');
               setFallback('');
               void update('open_suite', { suiteId: entry.id });
@@ -228,8 +229,9 @@ function Board() {
           <section aria-labelledby="case-list-title" className="flex min-w-0 flex-col rounded-xl border border-[#dce9e4] bg-[#f8fbf9] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 id="case-list-title" className="flex items-center gap-1.5 text-sm font-semibold"><ClipboardList className="h-4 w-4" aria-hidden="true" />执行范围</h2>
-              <button className={actions} type="button" onClick={() => setSelected(scope.length === suite.cases.length ? [] : suite.cases.map(({ id }) => id))}>
-                {scope.length === suite.cases.length ? '清空选择' : '选择全部'}
+              <button className={actions} type="button" disabled={!matching.length}
+                onClick={() => setSelectedIds((current) => setCasesChecked(current, matching, !allMatchingSelected))}>
+                {allMatchingSelected ? '取消选择当前' : '选择当前'} {matching.length} 条
               </button>
             </div>
             <label className="mt-2 block">
@@ -244,7 +246,10 @@ function Board() {
                   <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
                     <input type="checkbox" className="h-4 w-4 accent-[#176454]" aria-label={'选择 ' + item.topic}
                       checked={selectedIds.has(item.id)}
-                      onChange={(event) => setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setSelectedIds((current) => setCasesChecked(current, [item], checked));
+                      }} />
                   </label>
                   <button type="button" aria-pressed={active?.id === item.id}
                     className="min-h-11 min-w-0 flex-1 break-words py-2 pr-2 text-left text-sm aria-pressed:text-[#126348] aria-pressed:underline"

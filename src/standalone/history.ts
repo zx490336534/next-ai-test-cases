@@ -1,7 +1,7 @@
 import { EMPTY_MAP } from '@/lib/agent/mindMap';
 import { parseJson, RequestError } from '@/lib/agent/modelConfig';
 import { titleFor } from '@/lib/workspaces/title';
-import type { RemovedWorkspace, SavedWorkspace, WorkspaceSummary } from '@/lib/workspaces/types';
+import type { RemovedWorkspace, SavedWorkspace, WorkspaceSummary, WorkspaceWrite } from '@/lib/workspaces/types';
 import { renameSchema, reorderSchema, validateWorkspaceSave } from '@/lib/workspaces/validation';
 
 type Entry = SavedWorkspace & { customTitle?: string };
@@ -14,10 +14,10 @@ function saved({ customTitle, ...session }: Entry): SavedWorkspace {
   return { ...session, title: customTitle ?? session.title };
 }
 
-function newSession(): Entry {
+function newSession(snapshot: WorkspaceWrite = { messages: [], mindMap: EMPTY_MAP }): Entry {
   return {
-    id: crypto.randomUUID(), title: '新会话', updatedAt: new Date().toISOString(),
-    version: 0, messages: [], mindMap: EMPTY_MAP,
+    id: snapshot.writeId ?? crypto.randomUUID(), title: titleFor(snapshot), updatedAt: new Date().toISOString(),
+    version: 0, ...snapshot,
   };
 }
 
@@ -72,8 +72,17 @@ export async function browserHistory(request: Request, id?: string) {
     return Response.json(await readHistory(false, signal, (sessions) => sessions.map(summary)));
   }
   if (method === 'POST' && !id) {
+    const change = request.headers.get('content-type')?.startsWith('application/json')
+      ? await validateWorkspaceSave(await request.json().catch(() => null)) : undefined;
     const session = await readHistory(true, signal, (sessions) => {
-      const entry = newSession();
+      const entry = newSession(change?.snapshot);
+      const previous = sessions.find((row) => row.id === entry.id);
+      if (previous) {
+        if (previous.writeId === entry.writeId
+          && JSON.stringify(previous.messages) === JSON.stringify(entry.messages)
+          && JSON.stringify(previous.mindMap) === JSON.stringify(entry.mindMap)) return saved(previous);
+        throw new RequestError('副本已变更，请重试以另存新会话。', 409);
+      }
       sessions.unshift(entry);
       return saved(entry);
     });

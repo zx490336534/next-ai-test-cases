@@ -3,9 +3,10 @@
 import { download } from '@/lib/client/download';
 import { workspaceFetch } from '@/lib/client/runtime';
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, generateId } from 'ai';
+import { recoverGeneration, rememberGeneration } from './generation-retry';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { conversationText, type ConversationMessage, type RetryRequest } from '@/lib/agent/conversation';
+import { conversationTranscript, recentMaterialSources, type ConversationMessage, type RetryRequest } from '@/lib/agent/conversation';
 import type { Extensions } from '@/lib/agent/extensionContracts';
 import { normalizeMindMap, readMindMap, toCsv } from '@/lib/agent/mindMap';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
@@ -13,7 +14,7 @@ import type { MindMapNode } from '@/lib/agent/types';
 import type { SavedWorkspace } from '@/lib/workspaces/types';
 
 type Pending = { retry: RetryRequest; extensions: Extensions; errors: string[] };
-type Run = { incomplete?: ConversationMessage; staleReply?: ConversationMessage; staleEdit?: boolean; startedAt: number; extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
+type Run = { incomplete?: ConversationMessage; completed?: boolean; staleReply?: ConversationMessage; staleEdit?: boolean; startedAt: number; extensions: Extensions; atRevision: number; requirement: string; previous?: Pending; pending: Pending | null };
 
 export function useCaseWorkspace(
   session: SavedWorkspace, settings: ModelSettings, extensions: Extensions,
@@ -24,7 +25,7 @@ export function useCaseWorkspace(
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [warning, setWarning] = useState('');
-  const [retry, setRetry] = useState<Pending | null>(null);
+  const [retry, setRetry] = useState<Pending | null>(() => recoverGeneration(session));
   const [exporting, setExporting] = useState(false);
   const active = useRef<Run | null>(null);
   const mapRef = useRef(mindMap);
@@ -45,13 +46,7 @@ export function useCaseWorkspace(
     api: '/api/test-case-agent/conversation',
     fetch: workspaceFetch,
     prepareSendMessagesRequest({ body, messages }) {
-      const transcript = messages.filter(({ role }) => role !== 'system')
-        .map((message) => ({ role: message.role, content: conversationText(message) }))
-        .filter(({ content }) => content);
-      const original = transcript.find(({ role }) => role === 'user');
-      const originalRequirement = original && original.content.length <= 40_000 && !transcript.slice(-12).includes(original)
-        ? original.content : undefined;
-      return { body: { ...body, messages: transcript.slice(-20), originalRequirement } };
+      return { body: { ...body, ...conversationTranscript(messages), materialSources: recentMaterialSources(messages) } };
     },
   }), []);
 
@@ -82,22 +77,26 @@ export function useCaseWorkspace(
           run.pending = {
             retry: { requirement: run.requirement, plan: {
               modules: event.modules, sourceHash: event.sourceHash,
-              failedIds: run.previous?.retry.plan.failedIds ?? event.modules.map(({ id }) => id),
+              failedIds: run.previous?.retry.plan?.failedIds ?? event.modules.map(({ id }) => id),
             } },
             extensions: run.extensions,
             errors: [],
           };
-          if (!run.previous) commitMap(event.mindMap);
+          if (!run.previous?.retry.plan) commitMap(event.mindMap);
           break;
         case 'module': {
           const current = mapRef.current;
           commitMap({ ...current, children: current.children.map((node) => node.data.uid === event.id && !node.children.length
             ? { ...event.mindMap, data: node.data } : node) });
-          if (run.pending) run.pending.retry.plan.failedIds = run.pending.retry.plan.failedIds.filter((id) => id !== event.id);
+          const plan = run.pending?.retry.plan;
+          if (plan) plan.failedIds = plan.failedIds.filter((id) => id !== event.id);
           break;
         }
         case 'module-error': run.pending?.errors.push(event.message); break;
-        case 'complete': if (event.mindMap) commitMap(event.mindMap); break;
+        case 'complete':
+          run.completed = true;
+          if (event.mindMap) commitMap(event.mindMap);
+          break;
         case 'error': setError(event.message); break;
         case 'edit': {
           const current = readEditor();
@@ -123,17 +122,23 @@ export function useCaseWorkspace(
       atRevision: revision.current,
       requirement,
       previous,
-      pending: previous ? { ...previous, retry: { ...previous.retry, plan: { ...previous.retry.plan } }, errors: [] } : null,
+      pending: previous?.retry.plan ? { ...previous, retry: { ...previous.retry, plan: { ...previous.retry.plan } }, errors: [] } : null,
     };
     active.current = run;
     const generating = !!previous || !mapRef.current.children.length;
-    if (generating && !previous) setRetry(null);
+    const messageId = generateId();
+    if (generating && !previous?.retry.plan) {
+      rememberGeneration(session.id, { messageId, requirement, extensions: run.extensions });
+      if (!previous) setRetry(null);
+    }
     setMode(generating ? 'generate' : 'chat');
     setProgress('');
     setError('');
     setWarning('');
     try {
-      await chat.sendMessage({ text }, { body: { settings, extensions: run.extensions, currentMindMap: mapRef.current, selectedNodeId, retry: previous?.retry } });
+      await chat.sendMessage({ id: messageId, role: 'user', parts: [{ type: 'text', text }] }, {
+        body: { settings, extensions: run.extensions, currentMindMap: mapRef.current, selectedNodeId, retry: previous?.retry },
+      });
     } catch {
       setError('对话连接中断，请稍后重试。');
     } finally {
@@ -149,8 +154,11 @@ export function useCaseWorkspace(
           ? messages.map((item) => item.id === finished.id ? finished : item)
           : [...messages, finished]);
       }
-      if (run.pending?.retry.plan.failedIds.length) setRetry(run.pending);
-      else if (previous || !mapRef.current.children.length) setRetry(null);
+      if (run.completed || run.pending?.retry.plan) rememberGeneration(session.id);
+      if (run.pending?.retry.plan?.failedIds.length) setRetry(run.pending);
+      else if (generating) {
+        setRetry(run.completed ? null : { retry: { requirement }, extensions: run.extensions, errors: [] });
+      }
       active.current = null;
       setMode(null);
     }
@@ -182,11 +190,22 @@ export function useCaseWorkspace(
     }
   }
 
+  const availableRetry = !mindMap.children.length || retry?.retry.plan ? retry : null;
+  function sendInput(text: string, selectedNodeId?: string) {
+    const wantsRetry = /^(?:请)?(?:重试|重试生成|重新生成|再试一次)[。！!]?$/u.test(text.trim());
+    if (wantsRetry && !availableRetry && !mindMap.children.length) {
+      setError('没有可恢复的生成请求，请重新输入原需求。');
+      return false;
+    }
+    if (active.current) return false;
+    void send(text, wantsRetry ? availableRetry ?? undefined : undefined, selectedNodeId);
+    return true;
+  }
   return {
-    mindMap, commitMap, messages: chat.messages, send: (text: string, selectedNodeId?: string) => send(text, undefined, selectedNodeId), progress, mode,
-    error, setError, warning, retry, exporting, exportCsv, exportXmind,
+    mindMap, commitMap, messages: chat.messages, send: sendInput,
+    progress, mode, error, setError, warning, retry: availableRetry, exporting, exportCsv, exportXmind,
     stats: { caseCount: cases.length, priorities },
-    retryFailed: () => retry && send('重试未完成的模块', retry),
+    retryFailed: () => availableRetry && send(availableRetry.retry.plan ? '重试未完成的模块' : '重试生成', availableRetry),
     cancel: () => { void chat.stop(); setError('已停止，当前脑图仍保留。'); },
   };
 }

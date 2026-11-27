@@ -91,10 +91,16 @@ export function createCaseServer(store: ReturnType<typeof openCaseStore>, boardH
   }, ({ suiteId, runId }) => result(() => ({ run: store.getRun(suiteId, runId) }), '已读取执行批次。'));
 
   server.registerTool('record_run_results', {
-    description: '回写当前执行批次的实际用例结果和证据，只接受批次内的 ID。相同结果可安全重试。',
+    description: '回写执行结果和证据，返回本次确认的用例 ID、累计已记录数和批次总数。相同结果可安全重试，完整步骤和证据可用 get_run 读取。',
     inputSchema: recordRunInput,
     annotations: { ...local, destructiveHint: false, idempotentHint: true },
-  }, (input) => result(() => ({ run: store.record(input) }), '已记录执行结果。'));
+  }, (input) => result(() => {
+    const run = store.record(input);
+    return {
+      suiteId: run.suiteId, runId: run.id, caseIds: [...new Set(input.outcomes.map(({ caseId }) => caseId))],
+      recorded: run.outcomes.length, total: run.cases.length,
+    };
+  }, (receipt) => '已记录 ' + receipt.recorded + '/' + receipt.total + ' 条用例。'));
 
   return server;
 }

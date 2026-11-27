@@ -4,12 +4,17 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { Chat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import JSZip from 'jszip';
 import { GET, POST as upload } from '../src/app/api/test-case-agent/extensions/route';
 import { POST as conversation } from '../src/app/api/test-case-agent/conversation/route';
 import { buildMindMap, EMPTY_MAP } from '../src/lib/agent/mindMap';
 import { importSkills, resolveSkills } from '../src/lib/agent/skills';
 import { collectMaterials } from '../src/lib/agent/materials';
+import { conversationTranscript, recentMaterialSources, type ConversationMessage } from '../src/lib/agent/conversation';
+import { conversationSchema, streamConversation } from '../src/lib/agent/conversation-run';
+import { validateWorkspaceSave } from '../src/lib/workspaces/validation';
 import { importSkillSelection, mergeImportedSkills, planFolderImport } from '../src/components/workspace/skill-upload';
 
 const endpoint = 'http://127.0.0.1/api/test-case-agent/';
@@ -58,15 +63,24 @@ test('lists safe MCP metadata and loads only selected MCP and installed Skill ID
   const original = process.cwd();
   const directory = await mkdtemp(join(tmpdir(), 'test-cases-extension-'));
   const calls: string[] = [];
+  const longDocument = '甲'.repeat(16_000) + '第二段' + '乙'.repeat(16_000) + '原文尾部例外规则';
+  const modelInputs: { documents?: { text: string }[] }[] = [];
   const server = createServer(async (req, res) => {
     if (req.method !== 'POST') { res.writeHead(405).end(); return; }
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    const request = JSON.parse(body);
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (req.url === '/v1/chat/completions') {
+      const input = JSON.parse(request.messages.at(-1).content);
+      modelInputs.push(input);
+      const result = input.tree ? { assistantReply: '核对完毕', operations: [] } : { summary: '已生成', cases: [fixtureCase] };
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }));
+      return;
+    }
     if (request.id === undefined) { res.writeHead(202).end(); return; }
     const result = request.method === 'initialize'
       ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
-      : { content: [{ type: 'text', text: '合成资料：撤销后禁止再次接受。' }] };
+      : { content: [{ type: 'text', text: request.params.arguments.url.endsWith('/long') ? longDocument : '合成资料：撤销后禁止再次接受。' }] };
     if (request.method === 'tools/call') calls.push(request.params.name);
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }));
@@ -103,6 +117,61 @@ test('lists safe MCP metadata and loads only selected MCP and installed Skill ID
   await assert.rejects(collectMaterials('https://extensions.example.test/invites', undefined, ['unknown']), /列表已变化/);
   assert.deepEqual((await resolveSkills(['manual-qa']))[0].references, [{ path: 'references/notes.md', text: '注意撤销。' }]);
   await assert.rejects(resolveSkills(['../manual-qa']), /列表已变化/);
+
+  // Run through the same streamed messages and persisted metadata used by the workspace.
+  const config = { model: 'fixture', baseUrl: template.url + '/v1', apiKey: 'fixture' };
+  const transport = new DefaultChatTransport<ConversationMessage>({
+    api: endpoint + 'conversation',
+    prepareSendMessagesRequest: ({ messages, body }) => ({ body: {
+      ...body, ...conversationTranscript(messages), materialSources: recentMaterialSources(messages),
+    } }),
+    fetch: async (_url, init) => streamConversation(
+      conversationSchema.parse(JSON.parse(String(init?.body))), config, new AbortController().signal,
+      { readsLinks: true, collectMaterials, resolveSkills },
+    ),
+  });
+  const first = new Chat({ transport });
+  const url = 'https://extensions.example.test/long';
+  const extensions = { mcpIds: ['selected'] };
+  await first.sendMessage({ text: url }, { body: { currentMindMap: EMPTY_MAP, extensions } });
+  assert.equal(first.error, undefined);
+  assert.equal(modelInputs[0].documents?.[0].text, longDocument.slice(0, 16_000));
+  assert.match(JSON.stringify(first.messages.at(-1)?.parts), /第 1 至 16000 个字符/);
+  const currentMindMap = buildMindMap([fixtureCase]);
+  const { snapshot } = await validateWorkspaceSave(JSON.parse(JSON.stringify({ version: 0, messages: first.messages, mindMap: currentMindMap })));
+  const resumed = new Chat({ messages: snapshot.messages, transport });
+  assert.deepEqual(recentMaterialSources(resumed.messages), [{ url, range: { serverId: 'selected', start: 0, end: 16_000, total: longDocument.length } }]);
+  await resumed.sendMessage({ text: '继续读原文' }, { body: { currentMindMap, extensions } });
+  assert.equal(modelInputs[1].documents?.[0].text, longDocument.slice(16_000, 32_000));
+  await resumed.sendMessage({ text: '按照原文末尾补上例外规则' }, { body: { currentMindMap, extensions } });
+  assert.equal(modelInputs[2].documents?.[0].text, longDocument.slice(-16_000));
+  const reads = calls.length;
+  await resumed.sendMessage({ text: '把邀请用例改为 P0' }, { body: { currentMindMap, extensions } });
+  assert.equal(calls.length, reads);
+  assert.equal(modelInputs[3].documents, undefined);
+  assert.equal(recentMaterialSources(resumed.messages)[0].url, url);
+  await resumed.sendMessage({ text: '根据文档再检查例外规则' }, { body: { currentMindMap, extensions: { mcpIds: [] } } });
+  assert.equal(calls.length, reads);
+  assert.equal(modelInputs[4].documents, undefined);
+  assert.match(JSON.stringify(resumed.messages.at(-1)?.parts), /未启用/);
+  await resumed.sendMessage({ text: '按原文再核对一次' }, { body: { currentMindMap, extensions: { mcpIds: ['primary'] } } });
+  assert.equal(calls.at(-1), 'read_primary');
+  assert.equal(recentMaterialSources(resumed.messages)[0].range?.serverId, 'primary');
+});
+
+test('restores sources from a successful legacy MCP read and skips invalid historic requests', () => {
+  const url = 'http://intranet/requirements';
+  const user = (text: string): ConversationMessage => ({ id: 'u', role: 'user', parts: [{ type: 'text', text }] });
+  const reply: ConversationMessage = { id: 'a', role: 'assistant', parts: [{
+    type: 'dynamic-tool', toolName: 'read_materials', toolCallId: 'materials', state: 'output-available',
+    input: {}, output: { state: 'done', detail: '已读取 1 份' },
+  }] };
+  assert.deepEqual(recentMaterialSources([user(url), reply]), [{ url }]);
+  const oversized = [user('字'.repeat(40_001) + url), reply, user('把优先级改为 P1')];
+  assert.deepEqual(recentMaterialSources(oversized), []);
+  assert.ok(conversationSchema.safeParse({
+    ...conversationTranscript(oversized), materialSources: recentMaterialSources(oversized), currentMindMap: EMPTY_MAP,
+  }).success);
 });
 
 test('passes the uploaded Skill text and references to both generation and edit model prompts', async (t) => {

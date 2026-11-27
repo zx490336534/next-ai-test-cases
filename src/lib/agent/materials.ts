@@ -5,7 +5,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestError } from './modelConfig';
-import { hasRequirementText, requirementLinks, type MaterialSnapshot } from './material-snapshot';
+import { hasRequirementText, materialLimit, materialReadIntent, requirementLinks, type MaterialSnapshot, type MaterialSource } from './material-snapshot';
 export type { MaterialSnapshot } from './material-snapshot';
 
 const sourceServer = z.object({
@@ -57,14 +57,35 @@ async function readDocument(server: z.infer<typeof sourceServer>, url: string, s
     if (result.isError || !Array.isArray(result.content)) return '';
     return result.content.flatMap((block: { type?: unknown; text?: unknown }) => (
       block.type === 'text' && typeof block.text === 'string' ? [block.text] : []
-    )).join('\n').trim().slice(0, 16_000);
+    )).join('\n').trim();
   } finally {
     await client.close().catch(() => undefined);
   }
 }
 
-export async function collectMaterials(requirement: string, signal?: AbortSignal, mcpIds?: string[]): Promise<MaterialSnapshot> {
-  const links = requirementLinks(requirement);
+function excerpt(text: string, requirement: string, serverId: string, previous?: MaterialSource) {
+  const size = 16_000;
+  const total = text.length;
+  const lastStart = Math.max(0, total - size);
+  const prior = previous?.range;
+  let start = prior && prior.start < total ? prior.start : 0;
+  const intent = materialReadIntent(requirement);
+  if (intent === 'tail') {
+    start = lastStart;
+  } else if (intent === 'head') {
+    start = 0;
+  } else if (intent === 'next' && prior && prior.end < total) {
+    start = prior.end;
+  }
+  const end = Math.min(start + size, total);
+  return { text: text.slice(start, end), range: { serverId, start, end, total } };
+}
+
+export async function collectMaterials(
+  requirement: string, signal?: AbortSignal, mcpIds?: string[], previous: MaterialSource[] = [],
+): Promise<MaterialSnapshot> {
+  const explicit = requirementLinks(requirement);
+  const links = explicit.length ? explicit : previous.map(({ url }) => url);
   const documents: MaterialSnapshot['documents'] = [];
   if (!links.length) return { requirement, documents, missing: 0 };
   const configured = await loadServers();
@@ -72,21 +93,25 @@ export async function collectMaterials(requirement: string, signal?: AbortSignal
   if (selected && [...selected].some((id) => !Object.hasOwn(configured, id))) {
     throw new RequestError('已挂载 MCP 列表已变化，请重新选择', 400);
   }
-  const servers = Object.entries(configured).filter(([id]) => !selected || selected.has(id)).map(([, server]) => server);
-  for (const link of links.slice(0, 4)) {
+  const servers = Object.entries(configured).filter(([id]) => !selected || selected.has(id));
+  for (const link of links.slice(0, materialLimit)) {
     signal?.throwIfAborted();
     try {
       const url = new URL(link);
       if (url.username || url.password) continue;
-      const server = servers.find(({ allowedOrigins }) => allowedOrigins.includes(url.origin));
-      const text = server ? await readDocument(server, link, signal) : '';
-      if (text) documents.push({ url: link, text });
+      const prior = previous.find((source) => source.url === link);
+      const matches = servers.filter(([, server]) => server.allowedOrigins.includes(url.origin));
+      const source = matches.find(([id]) => id === prior?.range?.serverId) ?? matches[0];
+      if (!source) continue;
+      const [serverId, server] = source;
+      const text = await readDocument(server, link, signal);
+      if (text) documents.push({ url: link, ...excerpt(text, requirement, serverId, prior?.range?.serverId === serverId ? prior : undefined) });
     } catch {
       signal?.throwIfAborted();
     }
   }
 
   const missing = links.length - documents.length;
-  if (missing && !documents.length && !hasRequirementText(requirement, links)) throw new RequestError('无法读取资料，请粘贴需求正文或检查 MCP 配置', 422);
+  if (explicit.length && !documents.length && !hasRequirementText(requirement, explicit)) throw new RequestError('无法读取资料，请粘贴需求正文或检查 MCP 配置', 422);
   return { requirement, documents, missing };
 }

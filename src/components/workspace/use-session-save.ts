@@ -7,14 +7,17 @@ import { acknowledgedWrite, newWorkspaceWriteId, workspaceSnapshot, writeWorkspa
 
 export function useSessionSave(
   session: SavedWorkspace, snapshot: WorkspaceSnapshot, onSaved: (summary: WorkspaceSummary) => void,
-  { initialWriteIds, protectDraft, capture }: {
+  { initialWriteIds, initiallyDeleted = false, protectDraft, capture }: {
     initialWriteIds?: string[];
+    initiallyDeleted?: boolean;
     protectDraft?: boolean;
     capture?: (snapshot: WorkspaceSnapshot) => WorkspaceSnapshot | undefined;
   } = {},
 ) {
   const [confirmed, setConfirmed] = useState(() => JSON.stringify(workspaceSnapshot(session)));
   const [error, setError] = useState('');
+  const [deleted, setDeleted] = useState(initiallyDeleted);
+  const targetDeleted = useRef(initiallyDeleted);
   const [saving, setSaving] = useState(Boolean(initialWriteIds?.length));
   const serialized = useMemo(() => JSON.stringify(snapshot), [snapshot]);
   const version = useRef(session.version);
@@ -30,7 +33,7 @@ export function useSessionSave(
   const syncDraft = useCallback(() => {
     if (!mounted.current) return;
     const writeIds = [...previousPageWrites.current, ...(writing.current ? [writing.current] : [])];
-    const dirty = latest.current.serialized !== lastSaved.current || writeIds.length > 0;
+    const dirty = targetDeleted.current || latest.current.serialized !== lastSaved.current || writeIds.length > 0;
     recoveryAvailable.current = !protectDraft && writeWorkspaceDraft(session.id, dirty ? {
       version: version.current, writeIds, snapshot: latest.current.snapshot,
     } : undefined);
@@ -50,6 +53,7 @@ export function useSessionSave(
     }
 
     const save = async (retry = true): Promise<boolean> => {
+      if (targetDeleted.current) return false;
       const value = latest.current;
       if (value.serialized === lastSaved.current && !writing.current && !previousPageWrites.current.length) return true;
       const writeId = writing.current ??= newWorkspaceWriteId();
@@ -67,6 +71,12 @@ export function useSessionSave(
         setConfirmed(value.serialized);
         return true;
       } catch (cause) {
+        if (cause instanceof SessionRequestError && cause.status === 404) {
+          targetDeleted.current = true;
+          setDeleted(true);
+          syncDraft();
+          return false;
+        }
         if (retry && !keepalive && cause instanceof SessionRequestError && cause.status === 409) {
           const saved = await sessionRequest<SavedWorkspace>(session.id).catch(() => undefined);
           if (saved && acknowledgedWrite(saved, version.current, [...previousPageWrites.current, writeId])) {
@@ -103,7 +113,7 @@ export function useSessionSave(
   useLayoutEffect(() => {
     latest.current = { snapshot, serialized };
     syncDraft();
-    if (pending.current || writing.current || previousPageWrites.current.length || serialized !== lastSaved.current) {
+    if (!targetDeleted.current && (pending.current || writing.current || previousPageWrites.current.length || serialized !== lastSaved.current)) {
       timer.current = setTimeout(() => { void flush(); }, 250);
     }
     return () => clearTimeout(timer.current);
@@ -125,7 +135,7 @@ export function useSessionSave(
     };
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
       captureEditor();
-      if (!recoveryAvailable.current && (writing.current || previousPageWrites.current.length || latest.current.serialized !== lastSaved.current)) {
+      if (!recoveryAvailable.current && (targetDeleted.current || writing.current || previousPageWrites.current.length || latest.current.serialized !== lastSaved.current)) {
         event.preventDefault();
         event.returnValue = '';
       }
@@ -139,5 +149,11 @@ export function useSessionSave(
   }, [capture, flush, syncDraft]);
 
   const status = error ? 'error' : saving || serialized !== confirmed ? 'saving' : 'saved';
-  return { status, error, flush };
+  function copyWriteId(renew = false) {
+    if (renew) writing.current = newWorkspaceWriteId();
+    const id = writing.current ??= previousPageWrites.current.at(-1) ?? newWorkspaceWriteId();
+    syncDraft();
+    return id;
+  }
+  return { status, error, deleted, flush, copyWriteId };
 }

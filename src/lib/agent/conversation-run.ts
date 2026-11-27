@@ -6,21 +6,22 @@ import { chatRequestSchema, requirementSchema } from './contracts';
 import { extensionsSchema, type TextSkill } from './extensionContracts';
 import type { FollowUp } from './follow-ups';
 import { generationConcurrency, retrySchema, runGeneration, type Activity, type GenerationEvent } from './generation';
-import { type MaterialSnapshot, requirementLinks } from './material-snapshot';
+import { materialReadIntent, materialSourcesSchema, type MaterialSnapshot, type MaterialSource, requirementLinks } from './material-snapshot';
 import { createModel, modelError } from './model';
 import { type ModelConfig, modelRequestSchema } from './modelConfig';
 
 export const conversationSchema = chatRequestSchema.merge(modelRequestSchema).extend({
   extensions: extensionsSchema.optional(),
   originalRequirement: requirementSchema.optional(),
+  materialSources: materialSourcesSchema.optional(),
   selectedNodeId: z.string().max(300).optional(),
-  retry: z.object({ requirement: requirementSchema, plan: retrySchema }).optional(),
+  retry: z.object({ requirement: requirementSchema, plan: retrySchema.optional() }).optional(),
 }).refine(({ messages }) => messages.at(-1)?.role === 'user');
 
 type Sources = {
   readsLinks: boolean;
   resolveSkills: (installed?: string[], imported?: TextSkill[]) => Promise<TextSkill[]>;
-  collectMaterials: (requirement: string, signal: AbortSignal, mcpIds?: string[]) => Promise<MaterialSnapshot>;
+  collectMaterials: (requirement: string, signal: AbortSignal, mcpIds?: string[], previous?: MaterialSource[]) => Promise<MaterialSnapshot>;
 };
 
 export function streamConversation(
@@ -36,6 +37,7 @@ export function streamConversation(
     async execute({ writer }) {
       const start = performance.now();
       let followUps: FollowUp[] | undefined;
+      let materialSources: MaterialSource[] = [];
       function finish(finishReason: 'stop' | 'error') {
         const { calls, reported, totalTokens, detailed, inputTokens, outputTokens } = model.usage;
         writer.write({
@@ -43,6 +45,7 @@ export function streamConversation(
           finishReason,
           messageMetadata: {
             ...(followUps?.length && { followUps }),
+            ...(materialSources.length && { materialSources }),
             execution: {
               elapsedMs: Math.round(performance.now() - start),
               usage: { calls, reported, totalTokens, ...(detailed === reported && { inputTokens, outputTokens }) },
@@ -76,19 +79,32 @@ export function streamConversation(
       try {
         const editing = input.currentMindMap.children.length > 0 && !input.retry;
         const requirement = input.retry?.requirement ?? input.messages.at(-1)!.content;
-        const hasLinks = sources.readsLinks && requirementLinks(requirement).length > 0;
+        const hasNewLinks = requirementLinks(requirement).length > 0;
+        const previous = editing && sources.readsLinks && (hasNewLinks || materialReadIntent(requirement))
+          ? input.materialSources ?? [] : [];
+        const hasLinks = sources.readsLinks && (hasNewLinks || previous.length > 0);
         const source = { id: 'materials', kind: 'tool' as const, label: '读取外部资料' };
         const skills = await sources.resolveSkills(input.extensions?.installedSkillIds, input.extensions?.importedSkills);
         if (skills.length) trace({
           id: 'skills', kind: 'step', label: '载入 Skill', state: 'done', detail: '已载入 ' + skills.length + ' 个 Skill',
         });
         if (hasLinks) trace({ ...source, state: 'running' });
-        const materials = await sources.collectMaterials(requirement, signal, input.extensions?.mcpIds);
+        const materials = await sources.collectMaterials(requirement, signal, input.extensions?.mcpIds, previous);
         if (skills.length) materials.skills = skills;
-        if (hasLinks) trace({
-          ...source, state: materials.missing ? 'warning' : 'done',
-          detail: '已读取 ' + materials.documents.length + ' 份' + (materials.missing ? '，' + materials.missing + ' 份不可用' : ''),
-        });
+        if (hasLinks) {
+          materialSources = materials.documents.flatMap(({ url, range }) => range ? [{ url, range }] : []);
+          const partial = materials.documents.filter(({ text, range }) => range && text.length < range.total);
+          const detail = ['已读取 ' + materials.documents.length + ' 份' + (materials.missing ? '，' + materials.missing + ' 份不可用或未启用' : '')];
+          for (const { url, range } of materials.documents) {
+            if (range) detail.push(new URL(url).hostname + ' 本轮读取第 ' + (range.start + 1) + ' 至 ' + range.end + ' 个字符，共 ' + range.total + ' 个字符');
+          }
+          if (partial.length) {
+            const message = '本轮仅使用了部分文档内容。可发送“继续读原文”查看下一段，或“读取原文末尾”核对末段。';
+            detail.push(message);
+            emitData({ type: 'warning', message });
+          }
+          trace({ ...source, state: materials.missing || partial.length ? 'warning' : 'done', detail: detail.join('。') });
+        }
         if (editing) {
           if (materials.missing) emitData({ type: 'warning', message: materials.missing + ' 份资料未读取。' });
           const step = { id: 'chat', kind: 'step' as const, label: '解析指令并校验修改范围' };

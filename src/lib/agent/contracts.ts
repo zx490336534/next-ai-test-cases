@@ -3,7 +3,8 @@ import type { MindMapNode } from './types';
 
 export const priorities = ['P0', 'P1', 'P2', 'P3'] as const;
 export const prioritySchema = z.enum(priorities);
-export const requirementSchema = z.string().trim().min(1).max(40_000);
+export const maxRequirementLength = 40_000;
+export const requirementSchema = z.string().trim().min(1).max(maxRequirementLength);
 export const moduleSchema = z.object({
   id: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(160),
@@ -42,7 +43,7 @@ export const mindMapSchema: z.ZodType<MindMapNode> = z.lazy(() => z.object({
 export const chatRequestSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
-    content: z.string().trim().min(1).max(40_000),
+    content: requirementSchema,
   })).min(1).max(40),
   currentMindMap: mindMapSchema,
 });

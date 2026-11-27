@@ -32,17 +32,19 @@ import { ChatSuggestions } from '@/components/workspace/chat-support';
 import { ModelSettingsDialog, readSavedSettings } from '@/components/workspace/model-settings';
 import { WorkspaceExtensions } from '@/components/workspace/workspace-extensions';
 import { useCaseWorkspace } from '@/components/workspace/use-case-workspace';
+import { rememberGeneration } from '@/components/workspace/generation-retry';
 import { SessionHistory } from '@/components/workspace/session-history';
 import { WorkspacePanels, WorkspaceViews, useCompactWorkspace, type WorkspaceView } from '@/components/workspace/workspace-panels';
-import { sessionRequest } from '@/components/workspace/session-client';
-import { recoverWorkspaceDraft, writeWorkspaceDraft } from '@/components/workspace/workspace-draft';
+import { SessionRequestError, sessionRequest } from '@/components/workspace/session-client';
+import { deletedWorkspaceDraft, recoverWorkspaceDraft, writeWorkspaceDraft } from '@/components/workspace/workspace-draft';
 import { download } from '@/lib/client/download';
 import { useSessionSave } from '@/components/workspace/use-session-save';
 import { standalone } from '@/lib/client/runtime';
 import { normalizeMindMap } from '@/lib/agent/mindMap';
+import { maxRequirementLength } from '@/lib/agent/contracts';
 import type { Extensions, TextSkill } from '@/lib/agent/extensionContracts';
 import type { ModelSettings } from '@/lib/agent/modelConfig';
-import type { RemovedWorkspace, SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from '@/lib/workspaces/types';
+import type { RemovedWorkspace, SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary, WorkspaceWrite } from '@/lib/workspaces/types';
 
 const sessionKey = 'next-ai-test-cases:open-session';
 
@@ -79,6 +81,11 @@ export default function Page() {
         const list = await sessionRequest<WorkspaceSummary[]>(undefined, options);
         let lastId: string | null = null;
         try { lastId = sessionStorage.getItem(sessionKey); } catch { /* Storage can be disabled. */ }
+        const orphan = deletedWorkspaceDraft(lastId, list);
+        if (orphan) {
+          if (!controller.signal.aborted) { setHistory(list); setSession(orphan); }
+          return;
+        }
         const id = list.find((item) => item.id === lastId)?.id ?? list[0]?.id;
         const current = id ? await sessionRequest<SavedWorkspace>(id, options)
           : await sessionRequest<SavedWorkspace>(undefined, { ...options, method: 'POST' });
@@ -96,6 +103,19 @@ export default function Page() {
 
   async function openSession(id?: string) {
     select(await sessionRequest<SavedWorkspace>(id, id ? undefined : { method: 'POST' }));
+  }
+
+  async function leaveDeletedSession(id: string, copy?: WorkspaceWrite) {
+    const list = await sessionRequest<WorkspaceSummary[]>();
+    const nextId = !copy && list[0]?.id;
+    const next = nextId ? await sessionRequest<SavedWorkspace>(nextId)
+      : await sessionRequest<SavedWorkspace>(undefined, {
+        method: 'POST', ...(copy && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 0, ...copy }) }),
+      });
+    setHistory(list);
+    select(next);
+    writeWorkspaceDraft(id);
+    rememberGeneration(id);
   }
 
   async function renameSession(id: string, title: string) {
@@ -124,6 +144,7 @@ export default function Page() {
     const query = active ? new URLSearchParams({ selectNext: '1' }) : undefined;
     const result = await sessionRequest<RemovedWorkspace>(id, { method: 'DELETE' }, query);
     writeWorkspaceDraft(id);
+    rememberGeneration(id);
     setHistory(result.sessions);
     if (result.nextSession) select(result.nextSession);
   }
@@ -139,14 +160,14 @@ export default function Page() {
 
   return <Workspace key={session.id} session={session} settings={settings} setSettings={setSettings}
     extensions={extensions} setExtensions={setExtensions} skillLibrary={skillLibrary} setSkillLibrary={setSkillLibrary}
-    openSession={openSession} history={history}
+    openSession={openSession} leaveDeletedSession={leaveDeletedSession} history={history}
     remember={remember} renameSession={renameSession} reorderSessions={reorderSessions} removeSession={removeSession}
     isHistoryOpen={isHistoryOpen} setIsHistoryOpen={setIsHistoryOpen} isChatOpen={isChatOpen} setIsChatOpen={setIsChatOpen} />;
 }
 
 function Workspace({
   session, settings, setSettings, extensions, setExtensions, skillLibrary, setSkillLibrary, history, openSession, remember, renameSession, reorderSessions, removeSession,
-  isHistoryOpen, setIsHistoryOpen, isChatOpen, setIsChatOpen,
+  leaveDeletedSession, isHistoryOpen, setIsHistoryOpen, isChatOpen, setIsChatOpen,
 }: {
   session: SavedWorkspace;
   settings: ModelSettings;
@@ -156,6 +177,7 @@ function Workspace({
   skillLibrary: TextSkill[];
   setSkillLibrary: (skills: TextSkill[]) => void;
   openSession: (id?: string) => Promise<void>;
+  leaveDeletedSession: (id: string, copy?: WorkspaceWrite) => Promise<void>;
   history: WorkspaceSummary[];
   remember: (item: WorkspaceSummary) => void;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -199,6 +221,7 @@ function Workspace({
   }, [finishActiveEdit]);
   const persistence = useSessionSave(session, snapshot, remember, {
     initialWriteIds: draft.recovered?.version === session.version ? draft.recovered.writeIds : undefined,
+    initiallyDeleted: !history.some(({ id }) => id === session.id),
     protectDraft,
     capture,
   });
@@ -214,7 +237,9 @@ function Workspace({
 
   const loadingChat = workspace.mode !== null;
   const isInitialState = mindMap.children.length === 0;
-  const canSend = !loadingChat && !switching && input.trim().length > 0;
+  const inputLength = input.trim().length;
+  const excessLength = inputLength - maxRequirementLength;
+  const canSend = !loadingChat && !switching && inputLength > 0 && excessLength <= 0;
   const hasCases = mindMapStats.caseCount > 0;
 
   useEffect(() => {
@@ -304,6 +329,20 @@ function Workspace({
     }
   }
 
+  async function finishDeletedDraft(saveCopy: boolean) {
+    if (loadingChat || switching || (!saveCopy && !window.confirm('放弃本页草稿并打开其他会话？'))) return;
+    const current = capture(snapshot) ?? snapshot;
+    setSwitching(true);
+    try {
+      await leaveDeletedSession(session.id, saveCopy ? { ...current, writeId: persistence.copyWriteId() } : undefined);
+    } catch (cause) {
+      if (saveCopy && cause instanceof SessionRequestError && cause.status === 409) persistence.copyWriteId(true);
+      setError(cause instanceof Error ? cause.message : '无法打开会话，本页草稿仍保留');
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   function togglePanel(side: 'history' | 'chat', open: boolean) {
     if (side === 'history') setIsHistoryOpen(open);
     else {
@@ -321,8 +360,7 @@ function Workspace({
   function sendMessage() {
     if (!canSend) return;
     followLatestRef.current = true;
-    void workspace.send(input.trim(), selection ?? undefined);
-    setInput('');
+    if (workspace.send(input.trim(), selection ?? undefined)) setInput('');
   }
 
   const suggestions = !loadingChat && !input.trim() ? (
@@ -492,6 +530,16 @@ function Workspace({
             </div>
           ) : null}
         </CardHeader>
+        {persistence.deleted && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p role="alert">原会话已删除，本页改动保留为草稿。</p>
+            <Button type="button" variant="outline" size="sm" disabled={loadingChat || switching} onClick={() => void finishDeletedDraft(true)}>另存为新会话</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              download(new Blob([JSON.stringify(capture(snapshot) ?? snapshot, null, 2)], { type: 'application/json' }), 'workspace-draft.json');
+            }}>下载当前草稿</Button>
+            <Button type="button" variant="outline" size="sm" disabled={loadingChat || switching} onClick={() => void finishDeletedDraft(false)}>放弃并离开</Button>
+          </div>
+        )}
         {protectDraft && draft.conflict && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-900">
             <p role="alert">会话已在其他标签页更新，本页保留了未合并的草稿。</p>
@@ -578,6 +626,8 @@ function Workspace({
                       ref={composerRef}
                       aria-label={isInitialState ? "需求正文" : "修改指令"}
                       value={input}
+                      aria-invalid={excessLength > 0}
+                      aria-describedby={excessLength > 0 ? 'message-length-error' : undefined}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleInputKeyDown}
                       className="min-h-16 resize-none rounded-xl bg-[#fafcfb] text-base lg:min-h-[74px] lg:text-sm"
@@ -587,7 +637,12 @@ function Workspace({
                           : '输入修改指令，例如：删除某分支，新增 3 条边界用例'
                       }
                     />
-                    {persistence.status === 'error' ? (
+                    {excessLength > 0 && (
+                      <p id="message-length-error" role="status" className="mt-2 text-xs text-red-700">
+                        每条消息最多 {maxRequirementLength.toLocaleString('zh-CN')} 个字符，当前超出 {excessLength} 个。请缩短后发送。
+                      </p>
+                    )}
+                    {persistence.deleted ? <p role="status" className="mt-2 text-[11px] text-amber-800">原会话已删除，请另存本页草稿。</p> : persistence.status === 'error' ? (
                       <div className="mt-2 flex items-center gap-2">
                         <p role="alert" className="text-xs text-red-700">{persistence.error}</p>
                         <Button type="button" variant="outline" size="sm" onClick={() => { void persistence.flush(); }}>重试保存</Button>
@@ -600,8 +655,8 @@ function Workspace({
                     {!loadingChat && workspace.retry && (
                       <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
                         {workspace.retry.errors.map((message) => <p key={message}>{message}</p>)}
-                        <Button variant="outline" size="sm" className="mt-1" onClick={workspace.retryFailed}>
-                          重试 {workspace.retry.retry.plan.failedIds.length} 个失败或未完成模块
+                        <Button variant="outline" size="sm" className="mt-1" onClick={workspace.retryFailed} disabled={switching}>
+                          {workspace.retry.retry.plan ? '重试 ' + workspace.retry.retry.plan.failedIds.length + ' 个失败或未完成模块' : '用原需求重试'}
                         </Button>
                       </div>
                     )}

@@ -7,8 +7,9 @@ import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { GET as listSessions, PATCH as orderSessions, POST as createSession } from '../src/app/api/test-case-agent/sessions/route';
 import { DELETE as deleteSession, GET as getSession, PATCH as renameSession, PUT as saveSession } from '../src/app/api/test-case-agent/sessions/[id]/route';
-import { newWorkspaceWriteId, recoverWorkspaceDraft } from '../src/components/workspace/workspace-draft';
-import { EMPTY_MAP } from '../src/lib/agent/mindMap';
+import { deletedWorkspaceDraft, newWorkspaceWriteId, recoverWorkspaceDraft, workspaceSnapshot, writeWorkspaceDraft } from '../src/components/workspace/workspace-draft';
+import { buildCategoryNode, EMPTY_MAP, normalizeMindMap } from '../src/lib/agent/mindMap';
+import { validateWorkspaceSave } from '../src/lib/workspaces/validation';
 import { openWorkspaceStore, workspaceStore } from '../src/lib/workspaces/store';
 import type { WorkspaceSnapshot } from '../src/lib/workspaces/types';
 
@@ -68,6 +69,53 @@ test('only replays a tab draft against its original revision or its own acknowle
   } finally {
     store.close();
   }
+});
+
+test('opening a saved map compares equal to the editor, including freshly created and validated cases', async () => {
+  const category = buildCategoryNode('邀请', 'invites', [{
+    id: 'case', topic: '接受邀请', category: '邀请', precondition: '无', priority: 'P1', steps: '点击接受', expected: '显示成功',
+  }]);
+  const { snapshot: saved } = await validateWorkspaceSave({
+    version: 0, messages: [], mindMap: { ...EMPTY_MAP, children: [category] },
+  });
+  for (const persisted of [{ messages: [], mindMap: EMPTY_MAP }, saved]) {
+    const initialEditorState = { messages: persisted.messages, mindMap: normalizeMindMap(persisted.mindMap) };
+    assert.equal(JSON.stringify(workspaceSnapshot(persisted)), JSON.stringify(initialEditorState));
+  }
+});
+
+test('a tab can recover a deleted workspace on reload and retry creating its copy', (t) => {
+  const items = new Map<string, string>();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: {
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => items.set(key, value),
+    removeItem: (key: string) => items.delete(key),
+  } });
+  const store = openWorkspaceStore(':memory:');
+  t.after(() => {
+    store.close();
+    if (previous) Object.defineProperty(globalThis, 'sessionStorage', previous);
+    else Reflect.deleteProperty(globalThis, 'sessionStorage');
+  });
+  const original = store.create('profile');
+  writeWorkspaceDraft(original.id, { version: 0, snapshot });
+  assert.equal(deletedWorkspaceDraft(original.id, store.list('profile')), undefined);
+  store.remove('profile', original.id, true);
+  assert.throws(() => store.save('profile', original.id, 0, snapshot), /找不到/);
+  const recovered = deletedWorkspaceDraft(original.id, store.list('profile'));
+  assert.deepEqual(recovered?.messages, snapshot.messages);
+  assert.deepEqual(recovered?.mindMap, snapshot.mindMap);
+  const copy = { ...snapshot, writeId: newWorkspaceWriteId() };
+  const saved = store.create('profile', copy);
+  assert.notEqual(saved.id, original.id);
+  assert.deepEqual(store.create('profile', copy), saved);
+  assert.throws(() => store.create('other owner', copy), /副本已变更/);
+  assert.equal(store.list('other owner').length, 0);
+  store.save('profile', saved.id, saved.version, { messages: [], mindMap: EMPTY_MAP });
+  assert.throws(() => store.create('profile', copy), /副本已变更/);
+  writeWorkspaceDraft(original.id);
+  assert.equal(deletedWorkspaceDraft(original.id, store.list('profile')), undefined);
 });
 
 test('session routes scope persistence to a browser cookie and validate AI SDK messages', async (t) => {
@@ -165,6 +213,17 @@ test('session routes scope persistence to a browser cookie and validate AI SDK m
   assert.deepEqual(fresh.nextSession.messages, []);
   assert.deepEqual(fresh.nextSession.mindMap, EMPTY_MAP);
 
+  const copyBody = JSON.stringify({ version: 0, writeId: randomUUID(), ...snapshot });
+  const createCopy = (body: string) => createSession(new Request(root, {
+    method: 'POST', headers: { cookie: stranger, 'Content-Type': 'application/json' }, body,
+  }));
+  assert.equal((await createCopy('{}')).status, 400);
+  const copied = await (await createCopy(copyBody)).json();
+  assert.deepEqual(copied.messages, snapshot.messages);
+  assert.deepEqual(copied.mindMap, snapshot.mindMap);
+  assert.deepEqual(await (await createCopy(copyBody)).json(), copied);
+  const copyHistory = await listSessions(new Request(root, { headers: { cookie: stranger } }));
+  assert.deepEqual((await copyHistory.json()).map((item: { id: string }) => item.id), [copied.id]);
 });
 
 test('migrates existing SQLite files and preserves manual titles and ordering through autosave', async () => {

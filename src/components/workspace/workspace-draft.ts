@@ -1,4 +1,6 @@
-import type { SavedWorkspace, WorkspaceSnapshot } from '@/lib/workspaces/types';
+import { normalizeMindMap } from '@/lib/agent/mindMap';
+import { titleFor } from '@/lib/workspaces/title';
+import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from '@/lib/workspaces/types';
 
 export type WorkspaceDraft = {
   version: number;
@@ -17,7 +19,13 @@ export function newWorkspaceWriteId() {
 }
 
 export function workspaceSnapshot({ messages, mindMap }: WorkspaceSnapshot): WorkspaceSnapshot {
-  return { messages, mindMap };
+  return { messages, mindMap: normalizeMindMap(mindMap) };
+}
+
+export function deletedWorkspaceDraft(lastId: string | null, history: WorkspaceSummary[]) {
+  if (!lastId || history.some(({ id }) => id === lastId)) return;
+  const draft = readWorkspaceDraft(lastId);
+  if (draft) return { id: lastId, title: titleFor(draft.snapshot), updatedAt: '', version: draft.version, ...draft.snapshot };
 }
 
 export function readWorkspaceDraft(id: string): WorkspaceDraft | undefined {

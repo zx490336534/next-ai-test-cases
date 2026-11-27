@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { titleFor } from './title';
 import { EMPTY_MAP } from '@/lib/agent/mindMap';
 import { RequestError } from '@/lib/agent/modelConfig';
-import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary, WorkspaceWrite } from './types';
+import type { SavedWorkspace, WorkspaceSummary, WorkspaceWrite } from './types';
 
 export function openWorkspaceStore(path: string) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -43,7 +43,7 @@ export function openWorkspaceStore(path: string) {
   const get = database.prepare('SELECT ' + summaryColumns + ', version, snapshot FROM workspaces WHERE owner = ? AND id = ?');
   const insert = database.prepare(
     'INSERT INTO workspaces (id, owner, title, updated_at, snapshot, position)' +
-    ' SELECT ?, ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM workspaces WHERE owner = ?',
+    ' SELECT ?, ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM workspaces WHERE owner = ? ON CONFLICT(id) DO NOTHING',
   );
   const update = database.prepare(
     'UPDATE workspaces SET title = ?, updated_at = ?, snapshot = ?, version = version + 1' +
@@ -60,10 +60,15 @@ export function openWorkspaceStore(path: string) {
     return { ...summary, ...JSON.parse(snapshot) as WorkspaceWrite };
   }
 
-  function createSession(owner: string): SavedWorkspace {
-    const snapshot: WorkspaceSnapshot = { messages: [], mindMap: EMPTY_MAP };
-    const result = { id: randomUUID(), title: '新会话', updatedAt: new Date().toISOString(), version: 0 };
-    insert.run(result.id, owner, result.title, result.updatedAt, JSON.stringify(snapshot), owner);
+  function createSession(owner: string, snapshot: WorkspaceWrite = { messages: [], mindMap: EMPTY_MAP }): SavedWorkspace {
+    const result = { id: snapshot.writeId ?? randomUUID(), title: titleFor(snapshot), updatedAt: new Date().toISOString(), version: 0 };
+    const serialized = JSON.stringify(snapshot);
+    const inserted = insert.run(result.id, owner, result.title, result.updatedAt, serialized, owner);
+    if (!inserted.changes) {
+      const previous = get.get(owner, result.id);
+      if (previous?.snapshot === serialized) return getSession(owner, result.id);
+      throw new RequestError('副本已变更，请重试以另存新会话。', 409);
+    }
     return { ...result, ...snapshot };
   }
 
