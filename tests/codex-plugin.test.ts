@@ -7,7 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { writeBoardFile } from '../src/codex/board-file';
-import { setCasesChecked } from '../src/codex/case-selection';
+import { boardSelection, setCasesChecked } from '../src/codex/case-selection';
 import { createCaseServer } from '../src/codex/server';
 import { createSuiteInput, editSuiteInput, recordRunInput, startRunInput, type SuiteView } from '../src/codex/contracts';
 import { openCaseStore } from '../src/codex/store';
@@ -33,6 +33,32 @@ test('filtered case selection affects visible matches and preserves choices from
   assert.deepEqual(setCasesChecked(both, [revoked, valid], true), both);
   assert.deepEqual([...setCasesChecked(both, [valid, hidden], false)], ['revoked']);
   assert.deepEqual(setCasesChecked(both, [], false), both);
+});
+
+test('a refreshed board keeps only cases whose steps and execution context the user selected', (t) => {
+  const store = openCaseStore(':memory:');
+  t.after(store.close);
+  const view = store.create(sample);
+  const [changed, unchanged] = view.suite.cases;
+  const checked = boardSelection({ view, selectedIds: new Set(), selectionNotice: '' },
+    { type: 'check', cases: view.suite.cases, checked: true });
+  const updated = store.update({
+    suiteId: view.suite.id, revision: view.suite.revision,
+    changes: [{ action: 'update', caseId: changed.id, entry: { steps: '1. 发布草稿', expected: '1. 显示已发布' } }],
+  });
+  const refreshed = boardSelection(checked, { type: 'view', view: updated });
+  assert.deepEqual([...refreshed.selectedIds], [unchanged.id]);
+  assert.match(refreshed.selectionNotice, /取消勾选 1 条/);
+  assert.equal(boardSelection(refreshed, { type: 'view', view }), refreshed);
+  const confirmed = boardSelection(refreshed, { type: 'check', cases: [updated.suite.cases[0]], checked: true });
+  assert.equal(confirmed.selectedIds.size, 2);
+  assert.equal(confirmed.selectionNotice, '');
+  const moved = store.update({
+    suiteId: view.suite.id, revision: updated.suite.revision, changes: [], details: { context: '更换验收环境' },
+  });
+  const newContext = boardSelection(confirmed, { type: 'view', view: moved });
+  assert.equal(newContext.selectedIds.size, 0);
+  assert.match(newContext.selectionNotice, /执行上下文/);
 });
 
 test('Codex edits use revisions, stable case IDs, and atomic validation', async (t) => {

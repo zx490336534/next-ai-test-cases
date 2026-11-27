@@ -1,6 +1,6 @@
 {
   "name": "next-ai-test-cases",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -48,6 +48,7 @@
     "esbuild": "0.28.2",
     "eslint": "^10.15.0",
     "eslint-config-next": "16.4.6",
+    "fake-indexeddb": "6.2.8",
     "postcss": "^8.5.33",
     "tailwindcss": "^4.3.5",
     "tsx": "4.23.15",

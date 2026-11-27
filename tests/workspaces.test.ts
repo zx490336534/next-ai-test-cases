@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { GET as listSessions, PATCH as orderSessions, POST as createSession } from '../src/app/api/test-case-agent/sessions/route';
 import { DELETE as deleteSession, GET as getSession, PATCH as renameSession, PUT as saveSession } from '../src/app/api/test-case-agent/sessions/[id]/route';
-import { deletedWorkspaceDraft, newWorkspaceWriteId, recoverWorkspaceDraft, workspaceSnapshot, writeWorkspaceDraft } from '../src/components/workspace/workspace-draft';
+import { deletedWorkspaceDraft, newWorkspaceWriteId, readComposerDraft, recoverWorkspaceDraft, workspaceSnapshot, writeComposerDraft, writeWorkspaceDraft } from '../src/components/workspace/workspace-draft';
 import { buildCategoryNode, EMPTY_MAP, normalizeMindMap } from '../src/lib/agent/mindMap';
 import { validateWorkspaceSave } from '../src/lib/workspaces/validation';
 import { openWorkspaceStore, workspaceStore } from '../src/lib/workspaces/store';
@@ -115,6 +115,11 @@ test('a tab can recover a deleted workspace on reload and retry creating its cop
   store.save('profile', saved.id, saved.version, { messages: [], mindMap: EMPTY_MAP });
   assert.throws(() => store.create('profile', copy), /副本已变更/);
   writeWorkspaceDraft(original.id);
+  writeComposerDraft(original.id, '尚未发送的需求\n第二行');
+  assert.equal(readComposerDraft(saved.id), '');
+  assert.equal(readComposerDraft(original.id), '尚未发送的需求\n第二行');
+  assert.deepEqual(deletedWorkspaceDraft(original.id, store.list('profile'))?.messages, []);
+  writeComposerDraft(original.id, '');
   assert.equal(deletedWorkspaceDraft(original.id, store.list('profile')), undefined);
 });
 

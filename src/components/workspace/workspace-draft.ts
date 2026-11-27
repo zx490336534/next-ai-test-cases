@@ -1,4 +1,4 @@
-import { normalizeMindMap } from '@/lib/agent/mindMap';
+import { EMPTY_MAP, normalizeMindMap } from '@/lib/agent/mindMap';
 import { titleFor } from '@/lib/workspaces/title';
 import type { SavedWorkspace, WorkspaceSnapshot, WorkspaceSummary } from '@/lib/workspaces/types';
 
@@ -9,6 +9,26 @@ export type WorkspaceDraft = {
 };
 
 const prefix = 'next-ai-test-cases:unsaved:';
+const composerPrefix = 'next-ai-test-cases:composer:';
+const memoryDrafts = new Map<string, string>();
+
+export function readComposerDraft(id: string): string {
+  if (memoryDrafts.has(id)) return memoryDrafts.get(id)!;
+  try { return sessionStorage.getItem(composerPrefix + id) ?? ''; } catch { return ''; }
+}
+
+export function writeComposerDraft(id: string, text: string): boolean {
+  try {
+    if (text) sessionStorage.setItem(composerPrefix + id, text);
+    else sessionStorage.removeItem(composerPrefix + id);
+    memoryDrafts.delete(id);
+    return true;
+  } catch {
+    // Keep the latest value when switching sessions, even if the browser refuses tab storage.
+    memoryDrafts.set(id, text);
+    return false;
+  }
+}
 
 export function newWorkspaceWriteId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -26,6 +46,7 @@ export function deletedWorkspaceDraft(lastId: string | null, history: WorkspaceS
   if (!lastId || history.some(({ id }) => id === lastId)) return;
   const draft = readWorkspaceDraft(lastId);
   if (draft) return { id: lastId, title: titleFor(draft.snapshot), updatedAt: '', version: draft.version, ...draft.snapshot };
+  if (readComposerDraft(lastId)) return { id: lastId, title: '未发送的草稿', updatedAt: '', version: 0, messages: [], mindMap: EMPTY_MAP };
 }
 
 export function readWorkspaceDraft(id: string): WorkspaceDraft | undefined {

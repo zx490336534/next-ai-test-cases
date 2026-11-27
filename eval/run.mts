@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { runGeneration, type GenerationEvent } from '../src/lib/agent/generation';
 import { readMindMap, validateCaseContent } from '../src/lib/agent/mindMap';
@@ -24,10 +25,42 @@ const variants: Variant[] = ['baseline', 'single', 'serial', 'parallel', 'withou
 const requested = process.argv[2];
 if (requested !== 'report' && !variants.includes(requested as Variant)) throw new Error('Choose: report or ' + variants.join(', '));
 const variant = requested as Variant;
-const output = resolve('.eval-results', variant);
+const resultsDirectory = resolve('.eval-results');
 const usageStorage = new AsyncLocalStorage<ModelUsage>();
 const upstreamFetch = globalThis.fetch;
 const countUsage = () => ({ calls: 0, inputTokens: 0, outputTokens: 0, reported: 0 });
+
+type Experiment = { model: string; sourceHash: string; gatewayHash: string; fixtures: Fixture[] };
+const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+
+async function experimentInputs(model: string, baseUrl: string, fixtures: Fixture[]): Promise<Experiment> {
+  const agent = new URL('../src/lib/agent/', import.meta.url);
+  const files = (await readdir(agent)).filter((name) => name.endsWith('.ts')).sort().map((name) => new URL(name, agent));
+  files.push(...['./run.mts', './baseline.mts', '../src/lib/sha256.ts', '../pnpm-lock.yaml'].map((path) => new URL(path, import.meta.url)));
+  const source = createHash('sha256');
+  const contents = await Promise.all(files.map((file) => readFile(file)));
+  for (const content of contents) source.update(digest(content.toString()));
+  return { model, gatewayHash: digest(baseUrl), sourceHash: source.digest('hex'), fixtures };
+}
+
+async function publish(path: string, contents: string) {
+  const temporary = path + '.' + randomUUID() + '.tmp';
+  try {
+    await writeFile(temporary, contents, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function readOptional(path: string) {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
 
 function instrumentBaseline() {
   globalThis.fetch = async (input, init) => {
@@ -55,7 +88,13 @@ function instrumentBaseline() {
 async function run() {
   const config = resolveModelSettings();
   const fixtures = JSON.parse(await readFile('eval/requirements.json', 'utf8')) as Fixture[];
+  const experiment = await experimentInputs(config.model, config.baseUrl, fixtures);
+  const runId = digest(JSON.stringify(experiment));
+  const directory = join(resultsDirectory, 'runs', runId);
+  const output = join(directory, variant);
   await mkdir(output, { recursive: true });
+  await publish(join(directory, 'experiment.json'), JSON.stringify(experiment, null, 2));
+  console.log('Experiment', runId, config.model);
   const selectedIds = process.argv.slice(3);
   const trials = fixtures.flatMap((fixture) => [{ fixture, repeat: false }, ...(fixture.repeat ? [{ fixture, repeat: true }] : [])])
     .filter(({ fixture }) => (variant !== 'without-source' || !!fixture.document) && (!selectedIds.length || selectedIds.includes(fixture.id)));
@@ -67,7 +106,7 @@ async function run() {
 
   async function runTrial({ fixture, repeat }: typeof trials[number]) {
     const resultFile = join(output, fixture.id + (repeat ? '-repeat' : '') + '.json');
-    if (await readFile(resultFile).catch(() => null)) return;
+    if (await readOptional(resultFile)) return;
     const start = performance.now();
     let firstMs: number | null = null;
     let failed = 0;
@@ -135,7 +174,8 @@ async function run() {
 
     const trial: Trial = { id: fixture.id, repeat, variant, complex: fixture.complex,
       elapsedMs: performance.now() - start, firstMs, failed, limited, usage, cases, raw };
-    await writeFile(resultFile, JSON.stringify(trial, null, 2), { mode: 0o600, flag: 'wx' });
+    // A concurrent failure must not displace an already completed sample.
+    await publish(failed ? resultFile + '.failed' : resultFile, JSON.stringify(trial, null, 2));
     const coverage = score(fixture, cases);
     console.log(fixture.id + (repeat ? ' again' : ''), variant, cases.length, coverage.covered + '/' + coverage.total, 'failures', failed,
       'calls', usage.calls, 'seconds', Math.round(trial.elapsedMs / 1000));
@@ -146,6 +186,7 @@ async function run() {
   await Promise.all(Array.from({ length: jobs }, async () => {
     while (next < trials.length) await runTrial(trials[next++]);
   }));
+  if (trials.length) await publish(join(resultsDirectory, 'latest'), runId);
 }
 
 function score(fixture: Fixture, cases: TestCaseItem[]) {
@@ -159,14 +200,18 @@ function score(fixture: Fixture, cases: TestCaseItem[]) {
 }
 
 async function report() {
-  const fixtures = JSON.parse(await readFile('eval/requirements.json', 'utf8')) as Fixture[];
+  const runId = process.argv[3] ?? await readOptional(join(resultsDirectory, 'latest')) ?? 'legacy';
+  if (runId !== 'legacy' && !/^[a-f0-9]{64}$/.test(runId)) throw new Error('Invalid experiment ID');
+  const directory = runId === 'legacy' ? resultsDirectory : join(resultsDirectory, 'runs', runId);
+  const experiment: Experiment | undefined = runId === 'legacy' ? undefined : JSON.parse(await readFile(join(directory, 'experiment.json'), 'utf8'));
+  const fixtures = experiment?.fixtures ?? JSON.parse(await readFile('eval/requirements.json', 'utf8')) as Fixture[];
   const rows: object[] = [];
   for (const variant of variants) {
     const details = [];
     for (const fixture of fixtures) {
       for (const repeat of fixture.repeat ? [false, true] : [false]) {
-        const path = resolve('.eval-results', variant, fixture.id + (repeat ? '-repeat' : '') + '.json');
-        const raw = await readFile(path, 'utf8').catch(() => '');
+        const path = join(directory, variant, fixture.id + (repeat ? '-repeat' : '') + '.json');
+        const raw = await readOptional(path) ?? await readOptional(path + '.failed');
         if (!raw) continue;
         const trial: Trial = JSON.parse(raw);
         const invalidWithoutGate = trial.raw.reduce<number>((count, output) => {
@@ -178,7 +223,7 @@ async function report() {
           failed: trial.failed, limited: trial.limited, complex: fixture.complex });
       }
     }
-    rows.push({ variant, details });
+    rows.push({ variant, runId, model: experiment?.model ?? null, details });
   }
   console.log(JSON.stringify(rows, null, 2));
 }

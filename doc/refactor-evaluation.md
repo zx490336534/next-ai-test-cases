@@ -45,7 +45,7 @@
 
 ## 复现
 
-用本地 `.env.local` 配好模型。结果逐样本写入 Git 忽略的 `.eval-results/`。为不同模型或配置另开干净工作区，避免混用已缓存结果。
+用本地 `.env.local` 配好模型。每次运行会打印实验 ID。使用相同模型名、网关、样本集、生成代码和依赖锁文件时，同一变体会接着运行未完成或失败的样本。输入变化会生成新的实验 ID，历史记录保存在 Git 忽略的 `.eval-results/runs/` 下。
 
 ~~~bash
 for variant in baseline single serial parallel without-source; do
@@ -55,4 +55,4 @@ TEST_CASES_LOOPBACK=1 node --env-file=.env.local --import tsx eval/edit.mts
 pnpm --silent eval:cases report
 ~~~
 
-可以在变体名之后加样本 ID，仅执行选定样本。原始响应和个人模型配置留在本地。
+可以在变体名之后加样本 ID，仅执行选定样本。`report` 默认展示最近完成命令所属的实验；`report <实验ID>` 按该实验保存的样本和评分规则回看。`report legacy` 可读取旧目录中的结果，旧记录按当前样本评分，无法确认当时的模型。实验记录保存模型名和网关摘要，密钥只用于请求网关。

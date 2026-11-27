@@ -1,3 +1,4 @@
+import { version as pluginVersion } from '../../plugin/codex-test-cases/plugin.json';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -26,7 +27,7 @@ function result(action: () => Record<string, unknown>, description: string | ((d
 }
 
 export function createCaseServer(store: ReturnType<typeof openCaseStore>, boardHtml: string) {
-  const server = new McpServer({ name: 'test-case-workbench', version: '0.1.2' });
+  const server = new McpServer({ name: 'test-case-workbench', version: pluginVersion });
   registerAppResource(server, '用例脑图', resourceUri, {}, async () => ({
     contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: boardHtml }],
   }));
@@ -124,7 +125,7 @@ export async function main(args = process.argv.slice(2)) {
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw new WorkspaceError('工具参数须为 JSON 对象');
         const server = createCaseServer(store, boardHtml);
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-        const client = new Client({ name: 'test-case-workbench-cli', version: '0.1.2' });
+        const client = new Client({ name: 'test-case-workbench-cli', version: pluginVersion });
         try {
           await server.connect(serverTransport);
           await client.connect(clientTransport);

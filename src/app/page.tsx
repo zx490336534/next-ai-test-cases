@@ -16,7 +16,7 @@ import { rememberGeneration } from '@/components/workspace/generation-retry';
 import { SessionHistory } from '@/components/workspace/session-history';
 import { WorkspacePanels, WorkspaceViews, useCompactWorkspace, type WorkspaceView } from '@/components/workspace/workspace-panels';
 import { SessionRequestError, sessionRequest } from '@/components/workspace/session-client';
-import { deletedWorkspaceDraft, recoverWorkspaceDraft, writeWorkspaceDraft } from '@/components/workspace/workspace-draft';
+import { deletedWorkspaceDraft, readComposerDraft, recoverWorkspaceDraft, writeComposerDraft, writeWorkspaceDraft } from '@/components/workspace/workspace-draft';
 import { download } from '@/lib/client/download';
 import { useSessionSave } from '@/components/workspace/use-session-save';
 import { standalone } from '@/lib/client/runtime';
@@ -92,6 +92,8 @@ export default function Page() {
       : await sessionRequest<SavedWorkspace>(undefined, {
         method: 'POST', ...(copy && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 0, ...copy }) }),
       });
+    if (copy) writeComposerDraft(next.id, readComposerDraft(id));
+    writeComposerDraft(id, '');
     setHistory(list);
     select(next);
     writeWorkspaceDraft(id);
@@ -123,6 +125,7 @@ export default function Page() {
   async function removeSession(id: string, active: boolean) {
     const query = active ? new URLSearchParams({ selectNext: '1' }) : undefined;
     const result = await sessionRequest<RemovedWorkspace>(id, { method: 'DELETE' }, query);
+    writeComposerDraft(id, '');
     writeWorkspaceDraft(id);
     rememberGeneration(id);
     setHistory(result.sessions);
@@ -208,12 +211,17 @@ function Workspace({
   const title = history.find(({ id }) => id === session.id)?.title ?? session.title;
   const [switching, setSwitching] = useState(false);
   const [selection, setSelection] = useState<string | null>(null);
-  const [input, setInput] = useState('');
+  const [input, setInputState] = useState(() => readComposerDraft(session.id));
+  const [draftStored, setDraftStored] = useState(true);
+  function setInput(text: string) {
+    setInputState(text);
+    setDraftStored(writeComposerDraft(session.id, text));
+  }
   const [manualCanvas, setManualCanvas] = useState(false);
   const [scalePercent, setScalePercent] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const compact = useCompactWorkspace(commitActiveEdit);
-  const [view, selectView] = useState<WorkspaceView>(() => !session.mindMap.children.length && session.messages.length ? 'chat' : 'canvas');
+  const [view, selectView] = useState<WorkspaceView>(() => input || (!session.mindMap.children.length && session.messages.length) ? 'chat' : 'canvas');
   const chatVisible = compact ? view === 'chat' : isChatOpen;
 
   const loadingChat = workspace.mode !== null;
@@ -378,7 +386,8 @@ function Workspace({
             <p role="alert">原会话已删除，本页改动保留为草稿。</p>
             <Button type="button" variant="outline" size="sm" disabled={loadingChat || switching} onClick={() => void finishDeletedDraft(true)}>另存为新会话</Button>
             <Button type="button" variant="outline" size="sm" onClick={() => {
-              download(new Blob([JSON.stringify(capture(snapshot) ?? snapshot, null, 2)], { type: 'application/json' }), 'workspace-draft.json');
+              const recovered = { ...(capture(snapshot) ?? snapshot), ...(input && { unsentMessage: input }) };
+              download(new Blob([JSON.stringify(recovered, null, 2)], { type: 'application/json' }), 'workspace-draft.json');
             }}>下载当前草稿</Button>
             <Button type="button" variant="outline" size="sm" disabled={loadingChat || switching} onClick={() => void finishDeletedDraft(false)}>放弃并离开</Button>
           </div>
@@ -479,6 +488,7 @@ function Workspace({
                           : '输入修改指令，例如：删除某分支，新增 3 条边界用例'
                       }
                     />
+                    {!draftStored && input && <p role="status" className="mt-2 text-xs text-amber-800">浏览器无法暂存输入，刷新前请复制草稿。</p>}
                     {excessLength > 0 && (
                       <p id="message-length-error" role="status" className="mt-2 text-xs text-red-700">
                         每条消息最多 {maxRequirementLength.toLocaleString('zh-CN')} 个字符，当前超出 {excessLength} 个。请缩短后发送。

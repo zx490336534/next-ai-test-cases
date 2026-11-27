@@ -9,7 +9,7 @@ const baselineSha = 'ea6b411';
 export async function loadBaseline() {
   const directory = resolve('.eval-results', 'baseline-source');
   const marker = join(directory, '.ready');
-  if (!await readFile(marker).catch(() => null)) {
+  if (await readFile(marker, 'utf8').catch(() => null) !== baselineSha) {
     await mkdir(join(directory, 'src/lib/agent'), { recursive: true });
     for (const file of ['package.json', 'pnpm-lock.yaml', 'src/lib/agent/testCaseAgent.ts', 'src/lib/agent/types.ts']) {
       await writeFile(join(directory, file), execFileSync('git', ['show', baselineSha + ':' + file]));

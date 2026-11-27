@@ -1,15 +1,16 @@
+import { version as pluginVersion } from '../../plugin/codex-test-cases/plugin.json';
 import './board.css';
 import { App } from '@modelcontextprotocol/ext-apps';
 import { CheckCircle2, ChevronRight, ClipboardList, FolderOpen, ListFilter, Pencil, Play, RefreshCw, Scan, Search, Workflow, ZoomIn, ZoomOut } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MindMapView, type MindMapViewHandle } from '../components/mindmap/mindmap-view';
 import { buildMindMap, EMPTY_MAP, stripCategory } from '../lib/agent/mindMap';
 import type { TestCaseItem } from '../lib/agent/types';
-import { setCasesChecked } from './case-selection';
+import { boardSelection } from './case-selection';
 import type { CaseFields, Outcome, SuiteListItem, SuiteView } from './contracts';
 
-const app = new App({ name: '测试用例工作区', version: '0.1.2' });
+const app = new App({ name: '测试用例工作区', version: pluginVersion });
 const verdicts: Record<Outcome['status'], string> = { passed: '通过', failed: '失败', blocked: '阻塞', skipped: '跳过' };
 function errorMessage(result: Awaited<ReturnType<typeof app.callServerTool>>) {
   return result.content?.find((item) => item.type === 'text')?.text ?? '操作失败';
@@ -28,13 +29,14 @@ function loadSnapshot() {
 const snapshot = loadSnapshot();
 
 function Board() {
-  const [view, setView] = useState<SuiteView | undefined>(snapshot);
+  const [{ view, selectedIds, selectionNotice }, dispatch] = useReducer(boardSelection, {
+    view: snapshot, selectedIds: new Set<string>(), selectionNotice: '',
+  });
   const [workspaces, setWorkspaces] = useState<SuiteListItem[]>();
   const [activeId, setActiveId] = useState('');
   const [pane, setPane] = useState<'map' | 'cases'>('map');
   const [category, setCategory] = useState('');
   const [query, setQuery] = useState('');
-  const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState('');
   const [failure, setFailure] = useState('');
@@ -49,10 +51,10 @@ function Board() {
     app.ontoolresult = (result) => {
       const next = readView(result.structuredContent);
       const suites = result.structuredContent?.suites;
-      if (next) setView(next);
+      if (next) dispatch({ type: 'view', view: next });
       else if (Array.isArray(suites)) {
         setWorkspaces(suites);
-        setView(undefined);
+        dispatch({ type: 'view' });
       } else if (result.isError) setFailure(errorMessage(result));
     };
     void app.connect().catch(() => setFailure('无法连接 Codex。请通过聊天中的工作区工具重新打开。'));
@@ -99,12 +101,11 @@ function Board() {
       if (result.isError) throw new Error(errorMessage(result));
       const next = readView(result.structuredContent);
       if (!next) throw new Error('没有收到工作区数据');
-      setView(next);
+      dispatch({ type: 'view', view: next });
       if (next.suite.id !== suite?.id) {
         setCategory('');
         setQuery('');
         setPane('map');
-        setSelectedIds(new Set());
         setTarget('');
         setFallback('');
         setActiveId('');
@@ -167,7 +168,7 @@ function Board() {
       const list = result.structuredContent?.suites;
       if (!Array.isArray(list)) throw new Error('没有收到工作区列表');
       setWorkspaces(list);
-      setView(undefined);
+      dispatch({ type: 'view' });
     } catch (error) {
       setFailure(error instanceof Error ? error.message : '无法读取工作区列表');
     } finally {
@@ -257,7 +258,7 @@ function Board() {
               <h2 id="case-list-title">执行范围</h2>
               <div className="cb-case-filter">{moduleFilter}</div>
               <button className="cb-link ml-auto" type="button" disabled={!matching.length}
-                onClick={() => setSelectedIds((current) => setCasesChecked(current, matching, !allMatchingSelected))}>
+                onClick={() => dispatch({ type: 'check', cases: matching, checked: !allMatchingSelected })}>
                 {allMatchingSelected ? '取消选择当前' : '选择当前'} {matching.length} 条
               </button>
             </div>
@@ -266,16 +267,14 @@ function Board() {
               <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、模块或优先级" />
             </label>
             <p role="status" className="cb-count">显示 {matching.length} / {suite.cases.length} 条<span>已选 {scope.length} 条</span></p>
+            {selectionNotice && <p role="status" className="cb-meta mb-2">{selectionNotice}</p>}
             <ul className="cb-list">
               {matching.map((item) => (
                 <li key={item.id} data-active={active?.id === item.id}>
                   <label>
                     <input type="checkbox" aria-label={'选择 ' + item.topic}
                       checked={selectedIds.has(item.id)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setSelectedIds((current) => setCasesChecked(current, [item], checked));
-                      }} />
+                      onChange={(event) => dispatch({ type: 'check', cases: [item], checked: event.target.checked })} />
                   </label>
                   <button type="button" aria-pressed={active?.id === item.id}
                     className="cb-item"
