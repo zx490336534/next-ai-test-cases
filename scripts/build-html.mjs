@@ -4,7 +4,7 @@ import { inlineHtml } from './inline-html.mjs';
 const html = await inlineHtml({
   entry: 'src/standalone/main.tsx',
   aliases: { '@/lib/client/runtime': './src/standalone/runtime.ts' },
-  title: 'AI 测试用例助手 · 单文件版',
+  title: '测试用例工作台 · 单文件版',
   head: '  <meta name="local-model-gateway" content="">\n',
 });
 const output = new URL('../dist/', import.meta.url);

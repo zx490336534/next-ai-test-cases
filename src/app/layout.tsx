@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '测试用例生成助手',
+  title: '测试用例工作台',
   description: '测试用例生成与脑图编辑',
 };
 

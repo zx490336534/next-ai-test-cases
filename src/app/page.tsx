@@ -1,31 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import {
-  Download,
-  Expand,
-  FileArchive,
-  Loader2,
-  Ellipsis,
-  Maximize2,
-  MessageSquare,
-  PanelRightClose,
-  Plus,
-  Workflow,
-  Minimize2,
-  Redo2,
-  RefreshCw,
-  Scan,
-  Send,
-  Shrink,
-  Undo2,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react';
-import { NodeSearch } from '@/components/mindmap/node-search';
+import { Check, GitBranch, Loader2, MessageSquare, PanelRightClose, Plus, Send, Workflow } from 'lucide-react';
+import { CanvasControls, CanvasExport } from '@/components/workspace/canvas-controls';
+import { CanvasStart } from '@/components/workspace/canvas-start';
 import { MindMapView, type MindMapViewHandle } from '@/components/mindmap/mindmap-view';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { ConversationEntry } from '@/components/workspace/conversation-entry';
 import { ChatSuggestions } from '@/components/workspace/chat-support';
@@ -150,7 +130,7 @@ export default function Page() {
   }
 
   if (!session) return (
-    <main className="grid h-dvh place-items-center bg-[#edf4f2] p-4">
+    <main className="grid h-dvh place-items-center bg-[#f3f3f8] p-4">
       {initialError ? <div className="space-y-3 text-center">
         <p role="alert" className="text-sm text-red-700">{initialError}</p>
         <Button variant="outline" onClick={() => { setInitialError(''); setAttempt((count) => count + 1); }}>重新读取会话</Button>
@@ -229,10 +209,11 @@ function Workspace({
   const [switching, setSwitching] = useState(false);
   const [selection, setSelection] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  const [manualCanvas, setManualCanvas] = useState(false);
   const [scalePercent, setScalePercent] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const compact = useCompactWorkspace(commitActiveEdit);
-  const [view, selectView] = useState<WorkspaceView>(() => session.mindMap.children.length ? 'canvas' : 'chat');
+  const [view, selectView] = useState<WorkspaceView>(() => !session.mindMap.children.length && session.messages.length ? 'chat' : 'canvas');
   const chatVisible = compact ? view === 'chat' : isChatOpen;
 
   const loadingChat = workspace.mode !== null;
@@ -245,7 +226,6 @@ function Workspace({
   useEffect(() => {
     const syncFullscreen = () => {
       setIsFullscreen(document.fullscreenElement === editorPanelRef.current);
-      requestAnimationFrame(() => mindMapRef.current?.fit());
     };
 
     document.addEventListener('fullscreenchange', syncFullscreen);
@@ -367,169 +347,32 @@ function Workspace({
     <ChatSuggestions tree={mindMap} selection={selection} blank={isInitialState} followUps={messageList.at(-1)?.metadata?.followUps} choose={fillSuggestion} />
   ) : null;
 
-  const extraActions = (
-    <>
-      <Button
-        aria-label="撤销"
-        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
-        title="撤销"
-        variant="outline"
-        size="sm"
-        disabled={workspace.mode === 'generate'}
-        onClick={() => mindMapRef.current?.undo()}
-      >
-        <Undo2 className="h-4 w-4" />{compact && '撤销'}
-      </Button>
-      <Button
-        aria-label="重做"
-        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
-        title="重做"
-        variant="outline"
-        size="sm"
-        disabled={workspace.mode === 'generate'}
-        onClick={() => mindMapRef.current?.redo()}
-      >
-        <Redo2 className="h-4 w-4" />{compact && '重做'}
-      </Button>
-      <Button
-        aria-label="展开全部"
-        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
-        title="展开全部"
-        variant="outline"
-        size="sm"
-        onClick={() => mindMapRef.current?.expandAll()}
-      >
-        <Expand className="h-4 w-4" />{compact && '展开全部'}
-      </Button>
-      <Button
-        aria-label="折叠全部"
-        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
-        title="折叠全部"
-        variant="outline"
-        size="sm"
-        onClick={() => mindMapRef.current?.collapseAll()}
-      >
-        <Shrink className="h-4 w-4" />{compact && '折叠全部'}
-      </Button>
-      <Button
-        aria-label="刷新脑图"
-        className={compact ? "justify-start gap-1.5 px-2" : "h-9 w-9 p-0"}
-        title="刷新脑图"
-        variant="outline"
-        size="sm"
-        onClick={() => mindMapRef.current?.refresh()}
-      >
-        <RefreshCw className="h-4 w-4" />{compact && '刷新脑图'}
-      </Button>
-      {!compact && <Button
-        aria-label={isFullscreen ? '退出全屏' : '全屏'}
-        className="h-9 w-9 p-0"
-        title={isFullscreen ? '退出全屏' : '全屏'}
-        variant="outline"
-        size="sm"
-        onClick={toggleFullscreen}
-      >
-        {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-      </Button>}
-      <Button variant="outline" size="sm" onClick={exportCsv} disabled={!hasCases}>
-        <Download className="mr-2 h-4 w-4" />
-        CSV
-      </Button>
-      <Button variant="outline" size="sm" onClick={exportXmind} disabled={!hasCases || loadingExportXmind}>
-        {loadingExportXmind ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        ) : (
-          <FileArchive className="mr-2 h-4 w-4" />
-        )}
-        XMind
-      </Button>
-    </>
-  );
+  const showStart = isInitialState && !manualCanvas && !messageList.length && !loadingChat;
+  function compose(example?: string) {
+    if (example) setInput(example);
+    if (compact) selectView('chat');
+    else setIsChatOpen(true);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
 
   return (
-    <main ref={frameRef} className={'workspace-frame overflow-hidden bg-[#edf4f2]' + (compact ? ' workspace-compact' : '')}>
-      <Card ref={editorPanelRef} className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border-[#dce8e7] bg-white shadow-sm">
-        <CardHeader className="gap-2 border-b border-[#e7eeec] px-2.5 py-2 sm:px-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <CardTitle className="mr-auto flex min-w-0 items-center gap-1.5 text-sm font-semibold tracking-tight text-[#183637] lg:gap-2.5 lg:text-base">
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#e4f3ee] text-[#14685f] lg:h-8 lg:w-8">
-                <Workflow aria-hidden="true" className="h-4 w-4" />
-              </span>
-              测试用例脑图
-              {standalone && <span className="shrink-0 text-[11px] font-normal text-slate-600">单文件版</span>}
-            </CardTitle>
-            <ModelSettingsDialog settings={settings} onChange={setSettings} />
-            {compact && <div className="w-full sm:w-auto sm:min-w-64"><WorkspaceViews view={view} select={changeView} /></div>}
-            {(!compact || view === 'canvas') && (
-              <div className="flex w-full min-w-0 items-center gap-1 lg:w-auto lg:flex-wrap lg:gap-1.5">
-                <Button
-                  aria-label="缩小"
-                  className="h-9 w-9 p-0"
-                  title="缩小"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => mindMapRef.current?.zoomOut()}
-                >
-                  <ZoomOut className="h-4 w-4" />
-                </Button>
-                <span className="w-12 text-center text-xs text-slate-600">{scalePercent}%</span>
-                <Button
-                  aria-label="放大"
-                  className="h-9 w-9 p-0"
-                  title="放大"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => mindMapRef.current?.zoomIn()}
-                >
-                  <ZoomIn className="h-4 w-4" />
-                </Button>
-                <Button
-                  aria-label="适应画布"
-                  className="h-9 w-9 p-0"
-                  title="适应画布"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => mindMapRef.current?.fit()}
-                >
-                  <Scan className="h-4 w-4" />
-                </Button>
-                {compact && (
-                  <details className="relative ml-auto" onKeyDown={(event) => {
-                    if (event.key !== 'Escape') return;
-                    event.currentTarget.open = false;
-                    event.currentTarget.querySelector('summary')?.focus();
-                  }}>
-                    <summary aria-label="更多脑图操作" title="更多脑图操作"
-                      className="grid h-9 w-9 cursor-pointer list-none place-items-center rounded-md border border-input bg-white hover:bg-muted">
-                      <Ellipsis aria-hidden="true" className="h-4 w-4" />
-                    </summary>
-                    <div onClick={(event) => {
-                      if (!(event.target instanceof Element) || !event.target.closest('button:not(:disabled)')) return;
-                      const menu = event.currentTarget.closest('details');
-                      if (menu) {
-                        menu.open = false;
-                        menu.querySelector('summary')?.focus();
-                      }
-                    }} className="absolute right-0 z-40 mt-2 grid max-h-[min(16rem,45dvh)] w-56 grid-cols-2 gap-1 overflow-y-auto rounded-xl border border-[#dce8e7] bg-white p-2 shadow-lg">
-                      {extraActions}
-                    </div>
-                  </details>
-                )}
-                {!compact && extraActions}
-                <NodeSearch tree={mindMap} onSelect={(id) => mindMapRef.current?.locate(id)} />
-              </div>
-            )}
+    <main ref={frameRef} className={'workspace-frame' + (compact ? ' workspace-compact' : '')}>
+      <div ref={editorPanelRef} className="workspace-shell">
+        <header className="workbench-masthead">
+          <div className="workbench-identity">
+            <span className="workbench-mark"><Workflow size={21} strokeWidth={1.8} aria-hidden="true" /></span>
+            <h1>测试用例工作台</h1>
+            {standalone && <span className="edition">单文件版</span>}
           </div>
-          {!compact && hasCases ? (
-            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
-              {(['P0', 'P1', 'P2', 'P3'] as const).map((priority) => (
-                <span key={priority} className="rounded-md border bg-slate-50 px-2 py-1">
-                  {priority}: {mindMapStats.priorities[priority]}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </CardHeader>
+          <div className="masthead-actions">
+            <ModelSettingsDialog settings={settings} onChange={setSettings} />
+            <button type="button" className="new-session" aria-label="新建会话" title="新建会话"
+              disabled={loadingChat || switching} onClick={() => { void switchSession(); }}>
+              <Plus size={16} aria-hidden="true" /><span>新建会话</span>
+            </button>
+          </div>
+        </header>
+        {compact && <WorkspaceViews view={view} select={changeView} />}
         {persistence.deleted && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-amber-50 px-3 py-2 text-xs text-amber-900">
             <p role="alert">原会话已删除，本页改动保留为草稿。</p>
@@ -554,7 +397,7 @@ function Workspace({
             }}>放弃本页草稿</Button>
           </div>
         )}
-        <CardContent className="mt-0 min-h-0 min-w-0 flex-1 p-2 lg:p-3">
+        <div className="workspace-body">
           <WorkspacePanels
             compact={compact} view={view}
             expandHistory={() => togglePanel('history', true)}
@@ -562,48 +405,47 @@ function Workspace({
             history={compact || isHistoryOpen ? <SessionHistory items={history} selected={session.id} disabled={loadingChat || switching}
               select={(id) => { void switchSession(id); }} rename={renameSession} reorder={reorderSessions} remove={removeFromHistory}
               collapse={compact ? undefined : () => togglePanel('history', false)} /> : undefined}
-            canvas={<section aria-label="脑图编辑区" className="h-full min-h-0 min-w-0">
-              <MindMapView
-                ref={mindMapRef}
-                data={mindMap}
-                compact={compact}
-                onChange={workspace.commitMap}
-                readOnly={workspace.mode === 'generate' || switching}
-                onScaleChange={setScalePercent}
-                onSelectionChange={setSelection}
-              />
+            canvas={<section aria-label="脑图编辑区" className="canvas-pane">
+              <div className="canvas-heading">
+                <div className="canvas-title"><GitBranch size={17} aria-hidden="true" /><h2 title={title}>{hasCases ? title : '用例脑图'}</h2></div>
+                {hasCases && <CanvasExport busy={loadingExportXmind} csv={exportCsv} xmind={exportXmind} />}
+              </div>
+              {showStart ? <CanvasStart compose={compose} edit={() => setManualCanvas(true)} /> : <>
+                <div className="canvas-surface">
+                  <MindMapView ref={mindMapRef} data={mindMap} compact={compact} onChange={workspace.commitMap}
+                    readOnly={workspace.mode === 'generate' || switching} onScaleChange={setScalePercent} onSelectionChange={setSelection} />
+                </div>
+                <div className="canvas-footer">
+                  <div className="case-metrics" aria-label="用例统计">
+                    <span><strong>{mindMapStats.caseCount}</strong> 条用例</span>
+                    {(['P0', 'P1', 'P2', 'P3'] as const).filter((p) => mindMapStats.priorities[p]).map((p) =>
+                      <span className={'priority-count priority-' + p} key={p}>{p} <b>{mindMapStats.priorities[p]}</b></span>)}
+                  </div>
+                  <CanvasControls editor={mindMapRef} tree={mindMap} scale={scalePercent} readOnly={workspace.mode === 'generate' || switching}
+                    fullscreen={isFullscreen} toggleFullscreen={toggleFullscreen} />
+                </div>
+              </>}
             </section>}
             chat={compact || isChatOpen ? (
-              <aside aria-label="AI 对话区" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#d6e6e2] bg-white">
-                <div className="flex items-center justify-between gap-3 border-b border-[#e1ebe8] bg-[#f3f8f6] px-3 py-2.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <MessageSquare className="h-4 w-4 text-slate-700" />
-                    <span className="truncate text-sm font-semibold text-[#183637]" title={title}>{title}</span>
-                    <span className="shrink-0 rounded-md border bg-white px-2 py-0.5 text-xs text-slate-500">
-                      {loadingChat ? '处理中' : hasCases ? '可编辑' : '待生成'}
-                    </span>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Button type="button" variant="outline" size="sm" disabled={loadingChat || switching}
-                      className="h-8 gap-1.5 px-2" onClick={() => { void switchSession(); }}>
-                      <Plus aria-hidden="true" className="h-4 w-4" />新建会话
-                    </Button>
-                    {!compact && <button id="collapse-chat" type="button" aria-label="折叠对话" title="折叠对话" onClick={() => togglePanel('chat', false)}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-white text-slate-600 hover:bg-muted">
-                      <PanelRightClose aria-hidden="true" className="h-4 w-4" />
-                    </button>}
-                  </div>
-                </div>
-
+              <aside aria-label="AI 对话区" className="workspace-chat">
+                <header className="chat-heading">
+                  <div className="chat-heading-label"><MessageSquare size={17} aria-hidden="true" /><h2>AI 对话</h2></div>
+                  {loadingChat && <span className="chat-busy">处理中</span>}
+                  {!compact && <button id="collapse-chat" type="button" aria-label="折叠对话" title="折叠对话" onClick={() => togglePanel('chat', false)}>
+                    <PanelRightClose aria-hidden="true" size={16} />
+                  </button>}
+                </header>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   <div ref={feedRef} onScroll={(event) => {
                     const feed = event.currentTarget;
                     followLatestRef.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 56;
-                  }} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#f7faf9] px-3 py-3">
-                    <div className="flex flex-col gap-2.5">
+                  }} className="chat-feed min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+                    <div className="flex flex-col gap-5">
                       {messageList.length === 0 ? (
-                        <div className="rounded-lg border border-dashed bg-white p-3 text-sm leading-6 text-slate-500">
-                          {standalone ? '粘贴需求正文或业务规则，生成第一版测试用例。' : '输入需求正文、业务规则或资料链接，生成第一版测试用例。'}
+                        <div className="chat-welcome">
+                          <span className="chat-welcome-icon"><MessageSquare size={19} aria-hidden="true" /></span>
+                          <h3>描述你要验证的需求</h3>
+                          <p>{standalone ? '粘贴业务规则，或从需求示例开始。' : '粘贴业务规则或文档链接，也可以从需求示例开始。'}</p>
                         </div>
                       ) : (
                         messageList.map((message) => (
@@ -611,7 +453,7 @@ function Workspace({
                         ))
                       )}
                       {loadingChat && messageList.at(-1)?.role !== 'assistant' ? (
-                        <div role="status" className="text-xs text-[#456469]">
+                        <div role="status" className="text-xs text-[#666980]">
                           <Loader2 aria-hidden="true" className="mr-1 inline h-3.5 w-3.5 animate-spin" />
                           {loadingMessage || '正在处理…'}
                         </div>
@@ -620,7 +462,7 @@ function Workspace({
                     </div>
                   </div>
 
-                  <div className="workspace-composer min-w-0 border-t border-[#e2ece9] bg-white p-2.5 lg:p-3">
+                  <div className="workspace-composer min-w-0">
                     {!compact && suggestions}
                     <Textarea
                       ref={composerRef}
@@ -630,10 +472,10 @@ function Workspace({
                       aria-describedby={excessLength > 0 ? 'message-length-error' : undefined}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleInputKeyDown}
-                      className="min-h-16 resize-none rounded-xl bg-[#fafcfb] text-base lg:min-h-[74px] lg:text-sm"
+                      className="composer-input min-h-20 resize-none rounded-lg text-base lg:text-sm"
                       placeholder={
                         isInitialState
-                          ? compact ? '输入需求内容' : '输入需求内容，按 Enter 发送；Shift+Enter 换行'
+                          ? compact ? '输入需求内容' : '输入需求，Enter 发送，Shift+Enter 换行'
                           : '输入修改指令，例如：删除某分支，新增 3 条边界用例'
                       }
                     />
@@ -647,7 +489,7 @@ function Workspace({
                         <p role="alert" className="text-xs text-red-700">{persistence.error}</p>
                         <Button type="button" variant="outline" size="sm" onClick={() => { void persistence.flush(); }}>重试保存</Button>
                       </div>
-                    ) : <p role="status" className="mt-2 text-[11px] text-slate-500">
+                    ) : <p role="status" className="save-status"><Check size={12} aria-hidden="true" />
                       {persistence.status === 'saving' ? '正在保存会话…' : '会话已保存'}
                     </p>}
                     {warning && <p role="status" className="mt-2 text-xs text-amber-800">{warning}</p>}
@@ -680,8 +522,8 @@ function Workspace({
               </aside>
             ) : undefined}
           />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </main>
   );
 }

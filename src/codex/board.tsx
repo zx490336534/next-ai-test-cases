@@ -1,5 +1,6 @@
+import './board.css';
 import { App } from '@modelcontextprotocol/ext-apps';
-import { CheckCircle2, ClipboardList, Play, RefreshCw, Scan, Workflow, ZoomIn, ZoomOut } from 'lucide-react';
+import { CheckCircle2, ChevronRight, ClipboardList, FolderOpen, ListFilter, Pencil, Play, RefreshCw, Scan, Search, Workflow, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MindMapView, type MindMapViewHandle } from '../components/mindmap/mindmap-view';
@@ -10,9 +11,6 @@ import type { CaseFields, Outcome, SuiteListItem, SuiteView } from './contracts'
 
 const app = new App({ name: '测试用例工作区', version: '0.1.2' });
 const verdicts: Record<Outcome['status'], string> = { passed: '通过', failed: '失败', blocked: '阻塞', skipped: '跳过' };
-const actions = 'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-[#d5e5df] bg-white px-3 py-1.5 text-sm font-medium text-[#174842] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#267168] disabled:opacity-45';
-const fieldClass = 'w-full min-w-0 rounded-lg border border-[#cadcd6] bg-white px-3 py-2 text-base focus:outline-2 focus:outline-[#267168]';
-
 function errorMessage(result: Awaited<ReturnType<typeof app.callServerTool>>) {
   return result.content?.find((item) => item.type === 'text')?.text ?? '操作失败';
 }
@@ -33,6 +31,7 @@ function Board() {
   const [view, setView] = useState<SuiteView | undefined>(snapshot);
   const [workspaces, setWorkspaces] = useState<SuiteListItem[]>();
   const [activeId, setActiveId] = useState('');
+  const [pane, setPane] = useState<'map' | 'cases'>('map');
   const [category, setCategory] = useState('');
   const [query, setQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
@@ -101,8 +100,17 @@ function Board() {
       const next = readView(result.structuredContent);
       if (!next) throw new Error('没有收到工作区数据');
       setView(next);
-      setCategory('');
-      setQuery('');
+      if (next.suite.id !== suite?.id) {
+        setCategory('');
+        setQuery('');
+        setPane('map');
+        setSelectedIds(new Set());
+        setTarget('');
+        setFallback('');
+        setActiveId('');
+      } else if (category && !next.suite.cases.some((item) => stripCategory(item.category) === category)) {
+        setCategory('');
+      }
       return true;
     } catch (error) {
       setFailure(error instanceof Error ? error.message : '操作失败');
@@ -149,70 +157,88 @@ function Board() {
     }
   }
 
+  async function chooseWorkspace() {
+    setPending(true);
+    setFailure('');
+    setNotice('');
+    try {
+      const result = await app.callServerTool({ name: 'list_suites', arguments: {} }, { timeout: 12_000 });
+      if (result.isError) throw new Error(errorMessage(result));
+      const list = result.structuredContent?.suites;
+      if (!Array.isArray(list)) throw new Error('没有收到工作区列表');
+      setWorkspaces(list);
+      setView(undefined);
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : '无法读取工作区列表');
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (workspaces && !suite) return (
-    <main className="bg-[#edf4f1] p-3 text-[#172d31] sm:p-4">
-      <h1 className="text-lg font-semibold">测试用例脑图</h1>
-      <p className="mt-1 text-sm text-slate-600">选择要在当前聊天查看的工作区。</p>
-      {workspaces.length ? <ul className="mt-3 space-y-2">
+    <main className="cb-board cb-picker">
+      <header className="cb-heading">
+        <span className="cb-mark"><FolderOpen aria-hidden="true" /></span>
+        <div><h1>选择工作区</h1><p>{workspaces.length} 个最近使用的工作区</p></div>
+        <button type="button" className="cb-icon ml-auto" aria-label="刷新工作区列表" title="刷新工作区列表" disabled={pending} onClick={chooseWorkspace}><RefreshCw /></button>
+      </header>
+      {workspaces.length ? <ul className="cb-workspaces">
         {workspaces.map((entry) => <li key={entry.id}>
-          <button type="button" className={actions + ' w-full justify-between text-left'} disabled={pending}
-            onClick={() => {
-              setActiveId('');
-              setSelectedIds(new Set());
-              setTarget('');
-              setFallback('');
-              void update('open_suite', { suiteId: entry.id });
-            }}>
-            <span className="min-w-0 break-words">{entry.title}</span>
-            <span className="shrink-0 text-xs text-slate-600">{entry.count} 条用例</span>
+          <button type="button" disabled={pending} onClick={() => void update('open_suite', { suiteId: entry.id })}>
+            <Workflow aria-hidden="true" />
+            <span><strong>{entry.title}</strong><small>版本 {entry.revision} · {entry.count} 条用例</small></span>
+            <ChevronRight aria-hidden="true" />
           </button>
         </li>)}
-      </ul> : <p className="mt-3 text-sm text-slate-600">暂无工作区。先在聊天中生成用例。</p>}
-      {failure && <p className="mt-2 text-sm text-red-700" role="alert">{failure}</p>}
+      </ul> : <p className="cb-empty">暂无工作区。先在聊天中生成用例。</p>}
+      {failure && <p className="cb-feedback text-red-700" role="alert">{failure}</p>}
     </main>
   );
 
   if (!suite || !tree) return (
-    <main className="p-5 text-sm text-slate-600">
+    <main className="cb-board cb-empty">
       <p role={failure ? 'alert' : 'status'}>{failure || '正在读取用例工作区…'}</p>
     </main>
   );
 
-  return (
-    <main className="@container bg-[#edf4f1] p-3 text-[#172d31] sm:p-4">
-      <div className="mx-auto max-w-6xl overflow-hidden rounded-2xl border border-[#d5e5df] bg-white shadow-sm">
-        <header className="flex flex-wrap items-center gap-3 border-b border-[#e2ece7] px-4 py-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e0f1e8] text-[#176454]"><Workflow aria-hidden="true" className="h-5 w-5" /></span>
-          <div className="min-w-0 flex-1">
-            <h1 className="break-words text-lg font-semibold">{suite.title}</h1>
-            <p className="text-xs text-slate-600">版本 {suite.revision} · {suite.cases.length} 条用例</p>
-          </div>
-          {workspaces && <button className={actions} type="button" disabled={pending} onClick={() => {
-            setFailure('');
-            setNotice('');
-            setView(undefined);
-          }}>切换工作区</button>}
-          {snapshot ? <span className="text-xs text-slate-600">本地脑图快照</span> :
-            <button className={actions} type="button" disabled={pending} onClick={() => { void update('open_suite', { suiteId: suite.id }); }}>
-              <RefreshCw aria-hidden="true" className="h-4 w-4" />刷新
-            </button>}
-        </header>
+  const moduleFilter = <label className="cb-module">
+    <ListFilter aria-hidden="true" /><span className="sr-only">筛选用例模块</span>
+    <select value={category} onChange={(event) => setCategory(event.target.value)}>
+      <option value="">全部模块</option>
+      {categories.map((module) => <option key={module.id} value={module.name}>{module.name}（{module.count}）</option>)}
+    </select>
+  </label>;
 
-        <div className="grid min-w-0 gap-3 p-3 @min-[720px]:grid-cols-[minmax(0,1.5fr)_minmax(18rem,1fr)]">
-          <section aria-label="用例脑图" className="min-w-0">
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              <label className="min-w-40 flex-1">
-                <span className="sr-only">脑图模块</span>
-                <select value={category} onChange={(event) => setCategory(event.target.value)} className={fieldClass + ' min-h-10'}>
-                  <option value="">全部模块</option>
-                  {categories.map((module) => <option key={module.id} value={module.name}>{module.name}（{module.count}）</option>)}
-                </select>
-              </label>
-              <button className={actions} type="button" onClick={() => map.current?.fit()}><Scan aria-hidden="true" className="h-4 w-4" />适应画布</button>
-              <button className={actions} type="button" aria-label="缩小脑图" onClick={() => map.current?.zoomOut()}><ZoomOut aria-hidden="true" className="h-4 w-4" /></button>
-              <button className={actions} type="button" aria-label="放大脑图" onClick={() => map.current?.zoomIn()}><ZoomIn aria-hidden="true" className="h-4 w-4" /></button>
+  return (
+    <main className="cb-board">
+      <div className="cb-workspace" data-pane={pane}>
+        <header className="cb-heading">
+          <span className="cb-mark"><Workflow aria-hidden="true" /></span>
+          <div className="min-w-0 flex-1">
+            <h1>{suite.title}</h1>
+            <p>版本 {suite.revision} · {categories.length} 个模块 · {suite.cases.length} 条用例{snapshot && ' · 本地快照'}</p>
+          </div>
+          {!snapshot && <div className="cb-header-actions">
+            <button className="cb-button" type="button" title="切换工作区" disabled={pending} onClick={chooseWorkspace}><FolderOpen />切换工作区</button>
+            <button className="cb-icon" type="button" title="刷新工作区" aria-label="刷新工作区" disabled={pending} onClick={() => { void update('open_suite', { suiteId: suite.id }); }}><RefreshCw /></button>
+          </div>}
+        </header>
+        <nav className="cb-panes" aria-label="工作区视图">
+          <button type="button" aria-pressed={pane === 'map'} onClick={() => setPane('map')}><Workflow />用例脑图</button>
+          <button type="button" aria-pressed={pane === 'cases'} onClick={() => setPane('cases')}><ClipboardList />执行范围{scope.length > 0 && <span>（{scope.length}）</span>}</button>
+        </nav>
+        <div className="cb-layout">
+          <section aria-label="用例脑图" className="cb-map">
+            <div className="cb-panel-head">
+              <h2>用例脑图</h2>
+              {moduleFilter}
+              <div className="cb-map-tools">
+                <button className="cb-icon" type="button" title="适应画布" aria-label="适应画布" onClick={() => map.current?.fit()}><Scan /></button>
+                <button className="cb-icon" type="button" title="缩小脑图" aria-label="缩小脑图" onClick={() => map.current?.zoomOut()}><ZoomOut /></button>
+                <button className="cb-icon" type="button" title="放大脑图" aria-label="放大脑图" onClick={() => map.current?.zoomIn()}><ZoomIn /></button>
+              </div>
             </div>
-            <div className="h-72 @min-[720px]:h-[26rem]">
+            <div className="cb-canvas">
               <MindMapView key={suite.id} ref={map} data={tree} readOnly compact onNodeClick={(nodeId) => {
                 if (overview) {
                   const match = categories.find(({ id }) => id === nodeId);
@@ -220,31 +246,31 @@ function Board() {
                   return;
                 }
                 const item = matching.find(({ id }) => nodeId === id || nodeId.startsWith(id + '-'));
-                if (item) setActiveId(item.id);
+                if (item) { setActiveId(item.id); setPane('cases'); }
               }} />
             </div>
-            {overview && <p className="mt-1 px-1 text-xs text-slate-600">点击模块节点或使用模块选择器查看详细用例。</p>}
+            {overview && <p className="cb-meta mt-2">点击模块节点或使用模块选择器查看详细用例。</p>}
           </section>
 
-          <section aria-labelledby="case-list-title" className="flex min-w-0 flex-col rounded-xl border border-[#dce9e4] bg-[#f8fbf9] p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 id="case-list-title" className="flex items-center gap-1.5 text-sm font-semibold"><ClipboardList className="h-4 w-4" aria-hidden="true" />执行范围</h2>
-              <button className={actions} type="button" disabled={!matching.length}
+          <section aria-labelledby="case-list-title" className="cb-cases">
+            <div className="cb-panel-head">
+              <h2 id="case-list-title">执行范围</h2>
+              <div className="cb-case-filter">{moduleFilter}</div>
+              <button className="cb-link ml-auto" type="button" disabled={!matching.length}
                 onClick={() => setSelectedIds((current) => setCasesChecked(current, matching, !allMatchingSelected))}>
                 {allMatchingSelected ? '取消选择当前' : '选择当前'} {matching.length} 条
               </button>
             </div>
-            <label className="mt-2 block">
-              <span className="sr-only">搜索用例</span>
-              <input type="search" value={query} onChange={(event) => setQuery(event.target.value)}
-                className={fieldClass} placeholder="搜索标题、模块或优先级" />
+            <label className="cb-search">
+              <Search aria-hidden="true" /><span className="sr-only">搜索用例</span>
+              <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、模块或优先级" />
             </label>
-            <p role="status" className="mt-1 text-xs text-slate-600">当前显示 {matching.length} / {suite.cases.length}，已选 {scope.length}</p>
-            <ul className="my-2 max-h-72 min-w-0 overflow-y-auto overscroll-contain rounded-lg border border-[#dce9e4] bg-white">
+            <p role="status" className="cb-count">显示 {matching.length} / {suite.cases.length} 条<span>已选 {scope.length} 条</span></p>
+            <ul className="cb-list">
               {matching.map((item) => (
-                <li key={item.id} className="flex min-w-0 items-start border-b border-[#edf2ef] last:border-b-0">
-                  <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
-                    <input type="checkbox" className="h-4 w-4 accent-[#176454]" aria-label={'选择 ' + item.topic}
+                <li key={item.id} data-active={active?.id === item.id}>
+                  <label>
+                    <input type="checkbox" aria-label={'选择 ' + item.topic}
                       checked={selectedIds.has(item.id)}
                       onChange={(event) => {
                         const checked = event.target.checked;
@@ -252,51 +278,56 @@ function Board() {
                       }} />
                   </label>
                   <button type="button" aria-pressed={active?.id === item.id}
-                    className="min-h-11 min-w-0 flex-1 break-words py-2 pr-2 text-left text-sm aria-pressed:text-[#126348] aria-pressed:underline"
+                    className="cb-item"
                     onClick={() => { setActiveId(item.id); map.current?.locate(item.id); }}>
-                    <span className="mr-1.5 rounded bg-[#e9f3ed] px-1.5 py-0.5 text-xs font-medium text-[#176454]">{item.priority}</span>{item.topic}
+                    <span className="cb-priority" data-priority={item.priority}>{item.priority}</span><span>{item.topic}</span>
                   </button>
                 </li>
               ))}
             </ul>
-            {active && <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-[#e6f2ec] p-2">
-              <span className="min-w-0 flex-1 break-words text-sm">{active.topic}</span>
-              {!snapshot && <button className={actions} type="button" disabled={pending} onClick={openEditor}>编辑用例</button>}
+            {!matching.length && <p className="cb-empty">没有匹配的用例，请调整筛选条件。</p>}
+            {active && <div className="cb-detail">
+              <div className="flex items-start justify-between gap-2">
+                <strong className="min-w-0 break-words">{active.topic}</strong>
+                {!snapshot && <button className="cb-link shrink-0" type="button" disabled={pending} onClick={openEditor}><Pencil />编辑用例</button>}
+              </div>
+              <details>
+                <summary>用例详情</summary>
+                <dl>
+                  <dt>前置条件</dt><dd>{active.precondition}</dd>
+                  <dt>测试步骤</dt><dd>{active.steps}</dd>
+                  <dt>预期结果</dt><dd>{active.expected}</dd>
+                </dl>
+              </details>
             </div>}
-            {active && <details className="mb-2 rounded-lg border border-[#dce9e4] bg-white px-2 py-1.5 text-xs">
-              <summary className="cursor-pointer font-medium">用例详情</summary>
-              <dl className="mt-2 space-y-1 break-words whitespace-pre-wrap">
-                <dt className="font-semibold">前置条件</dt><dd>{active.precondition}</dd>
-                <dt className="font-semibold">测试步骤</dt><dd>{active.steps}</dd>
-                <dt className="font-semibold">预期结果</dt><dd>{active.expected}</dd>
-              </dl>
-            </details>}
-            <label className="block text-xs font-medium text-slate-700">执行目标（可沿用聊天中的目标）
-              <input className={fieldClass + ' mt-1'} maxLength={1000} value={target} onChange={(event) => setTarget(event.target.value)} placeholder="本地项目、测试环境或明确的测试对象" />
-            </label>
-            <button className={actions + ' mt-3 bg-[#176454]! text-white!'} type="button" disabled={!scope.length || pending} onClick={() => { void sendSelection(); }}>
-              <Play className="h-4 w-4" aria-hidden="true" />{snapshot ? '生成 Codex 执行指令' : '交给 Codex 执行'}（{scope.length}）
-            </button>
+            <div className="cb-submit">
+              <label>执行目标 <small>可沿用聊天中的目标</small>
+                <input className="cb-field" maxLength={1000} value={target} onChange={(event) => setTarget(event.target.value)} placeholder="本地项目或测试环境" />
+              </label>
+              <button className="cb-primary mt-3 w-full" type="button" disabled={!scope.length || pending} onClick={() => { void sendSelection(); }}>
+                <Play />{snapshot ? '生成 Codex 执行指令' : '交给 Codex 执行'}（{scope.length}）
+              </button>
+            </div>
           </section>
         </div>
 
-        <div className="space-y-2 px-4 pb-4 text-sm">
-          {notice && <p role="status" className="text-[#176454]">{notice}</p>}
+        <div className="cb-feedback space-y-2">
+          {notice && <p role="status" className="text-[#4540a0]">{notice}</p>}
           {failure && !editing && <p role="alert" className="text-red-700">{failure}</p>}
-          {fallback && fallback === executionPrompt && <label className="block text-sm text-slate-700">{snapshot ? '将下面的指令粘贴到 Codex 聊天，按此快照的工作区和版本执行所选用例。' : '当前客户端无法代发消息。把下面的指令粘贴到 Codex 聊天即可执行所选用例。'}
-            <textarea className={fieldClass + ' mt-1 resize-y'} rows={5} readOnly value={fallback} onFocus={(event) => event.currentTarget.select()} />
+          {fallback && fallback === executionPrompt && <label className="block text-sm text-[#60677a]">{snapshot ? '将下面的指令粘贴到 Codex 聊天，按此快照的工作区和版本执行所选用例。' : '当前客户端无法代发消息。把下面的指令粘贴到 Codex 聊天即可执行所选用例。'}
+            <textarea className="cb-field mt-1 resize-y" rows={5} readOnly value={fallback} onFocus={(event) => event.currentTarget.select()} />
           </label>}
-          {run && <details className="rounded-lg border border-[#dce9e4] px-3 py-2">
+          {run && <details className="cb-run">
             <summary className="cursor-pointer text-sm font-semibold">
-              <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 text-[#176454]" />最近执行 · 版本 {run.revision} · 已记录 {run.outcomes.length}/{run.cases.length}
+              <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 text-[#4540a0]" />最近执行 · 版本 {run.revision} · 已记录 {run.outcomes.length}/{run.cases.length}
             </summary>
-            <p className="mt-2 break-words text-slate-700">目标 {run.target}</p>
+            <p className="mt-2 break-words text-[#60677a]">目标 {run.target}</p>
             <ul className="mt-2 space-y-2">
               {run.cases.map((item) => {
                 const outcome = outcomes.get(item.id);
-                return <li key={item.id} className="break-words border-t border-[#edf2ef] pt-2">
+                return <li key={item.id} className="break-words border-t border-[#e0e2ea] pt-2">
                   <span className="font-medium">{outcome ? verdicts[outcome.status] : '待执行'}</span> · {item.topic}
-                  {outcome && <p className="mt-1 whitespace-pre-wrap text-slate-600">{outcome.evidence}</p>}
+                  {outcome && <p className="mt-1 whitespace-pre-wrap text-[#60677a]">{outcome.evidence}</p>}
                 </li>;
               })}
             </ul>
@@ -305,7 +336,7 @@ function Board() {
       </div>
 
       <dialog ref={dialog} aria-labelledby="case-editor-title" onClose={() => setEditing(undefined)}
-        className="m-auto max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto rounded-xl border border-[#d5e5df] bg-white p-4 shadow-xl backdrop:bg-slate-950/40">
+        className="cb-dialog">
         {editing && <form className="space-y-3" onSubmit={(event) => {
           event.preventDefault();
           void save(event.currentTarget);
@@ -316,18 +347,18 @@ function Board() {
           }
         }}>
           <h2 id="case-editor-title" className="text-base font-semibold">编辑用例</h2>
-          <label className="block text-sm">标题<input className={fieldClass} name="topic" defaultValue={editing.entry.topic} maxLength={200} required /></label>
+          <label className="block text-sm">标题<input className="cb-field" name="topic" defaultValue={editing.entry.topic} maxLength={200} required /></label>
           <div className="grid grid-cols-[minmax(0,1fr)_5rem] gap-2">
-            <label className="block text-sm">类别<input className={fieldClass} name="category" defaultValue={editing.entry.category} maxLength={120} required /></label>
-            <label className="block text-sm">优先级<select className={fieldClass} name="priority" defaultValue={editing.entry.priority}>{['P0', 'P1', 'P2', 'P3'].map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label className="block text-sm">类别<input className="cb-field" name="category" defaultValue={editing.entry.category} maxLength={120} required /></label>
+            <label className="block text-sm">优先级<select className="cb-field" name="priority" defaultValue={editing.entry.priority}>{['P0', 'P1', 'P2', 'P3'].map((value) => <option key={value}>{value}</option>)}</select></label>
           </div>
-          <label className="block text-sm">前置条件<textarea className={fieldClass} name="precondition" rows={2} defaultValue={editing.entry.precondition} maxLength={2000} required /></label>
-          <label className="block text-sm">测试步骤<textarea className={fieldClass} name="steps" rows={4} defaultValue={editing.entry.steps} maxLength={8000} required /></label>
-          <label className="block text-sm">预期结果<textarea className={fieldClass} name="expected" rows={4} defaultValue={editing.entry.expected} maxLength={8000} required /></label>
+          <label className="block text-sm">前置条件<textarea className="cb-field" name="precondition" rows={2} defaultValue={editing.entry.precondition} maxLength={2000} required /></label>
+          <label className="block text-sm">测试步骤<textarea className="cb-field" name="steps" rows={4} defaultValue={editing.entry.steps} maxLength={8000} required /></label>
+          <label className="block text-sm">预期结果<textarea className="cb-field" name="expected" rows={4} defaultValue={editing.entry.expected} maxLength={8000} required /></label>
           {failure && <p role="alert" className="text-sm text-red-700">{failure}</p>}
           <div className="flex justify-end gap-2">
-            <button type="button" className={actions} onClick={() => dialog.current?.close()}>取消</button>
-            <button className={actions + ' bg-[#176454]! text-white!'} type="button" disabled={pending} onClick={(event) => {
+            <button type="button" className="cb-button" onClick={() => dialog.current?.close()}>取消</button>
+            <button className="cb-primary" type="button" disabled={pending} onClick={(event) => {
               const form = event.currentTarget.form;
               if (form) void save(form);
             }}>保存修改</button>

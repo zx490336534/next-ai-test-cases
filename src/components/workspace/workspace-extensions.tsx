@@ -86,7 +86,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
         {activeCount ? <span className="text-xs text-primary">{activeCount} 个 Skill</span> : null}
       </Button>
       <dialog ref={dialog} aria-labelledby={title} onCancel={(event) => { if (importing) event.preventDefault(); }}
-        className="m-auto max-h-[88dvh] w-[calc(100%-2rem)] max-w-lg overscroll-contain overflow-auto rounded-2xl border border-[#dce8e7] bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/35">
+        className="m-auto max-h-[88dvh] w-[calc(100%-2rem)] max-w-lg overscroll-contain overflow-auto rounded-2xl border border-[#e0e2ea] bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/35">
         <div className="space-y-5 p-5">
           <header className="flex items-start justify-between gap-4">
             <div>
@@ -99,7 +99,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
             </button>
           </header>
 
-          {!standalone && <fieldset disabled={importing} className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
+          {!standalone && <fieldset disabled={importing} className="space-y-2 rounded-xl border border-[#e0e2ea] px-3 py-2.5">
             <legend className="px-1 text-sm font-semibold">资料读取 · MCP</legend>
             <p className="text-xs text-slate-600">粘贴资料链接时，从已选的服务匹配可用来源。</p>
             {catalogError ? <p role="alert" className="text-xs text-red-700">{catalogError}</p> : !catalog ? (
@@ -107,7 +107,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
             ) : catalog.mcp.length > 0 ? (
               <>
                 {catalog.mcp.map(({ id, name }) => (
-                  <label key={id} className="flex min-w-0 items-center gap-2 rounded-md bg-[#f5faf8] px-2.5 py-2 text-sm">
+                  <label key={id} className="flex min-w-0 items-center gap-2 rounded-md bg-[#f6f5fb] px-2.5 py-2 text-sm">
                     <input type="checkbox" className="accent-primary" checked={value.mcpIds?.includes(id) ?? true}
                       onChange={(event) => toggleMcp(id, event.target.checked)} />
                     <span className="break-all">{name}</span>
@@ -123,7 +123,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
             ) : <p className="text-xs text-slate-500">服务端暂未挂载 MCP。</p>}
           </fieldset>}
 
-          <fieldset className="space-y-2 rounded-xl border border-[#dce8e7] px-3 py-2.5">
+          <fieldset className="space-y-2 rounded-xl border border-[#e0e2ea] px-3 py-2.5">
             <legend className="px-1 text-sm font-semibold">测试规范 · Skill</legend>
             <p className="text-xs text-slate-600">{standalone ? '导入 Skill 文件或文件夹。' : '选择已安装的 Skill，或导入文件和文件夹。'}文件夹中可混放解压后的 Skill 和 ZIP、.skill 压缩包。</p>
             <div className="flex flex-wrap gap-1.5">
@@ -133,7 +133,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
                 onClick={() => onChange({ ...value, installedSkillIds: [], importedSkills: [] })}>全不选</Button>
             </div>
             {mounted.map(({ id, name }) => (
-              <label key={id} className="flex min-w-0 items-center gap-2 rounded-md bg-[#f5faf8] px-2.5 py-2 text-sm">
+              <label key={id} className="flex min-w-0 items-center gap-2 rounded-md bg-[#f6f5fb] px-2.5 py-2 text-sm">
                 <input type="checkbox" className="accent-primary" checked={installed.includes(id)} disabled={importing}
                   onChange={(event) => onChange({
                     ...value, installedSkillIds: event.target.checked ? [...installed, id] : installed.filter((item) => item !== id),
@@ -168,7 +168,7 @@ export function WorkspaceExtensions({ value, onChange, library, onLibraryChange,
             {library.map((skill) => {
               const enabled = activeIds.has(skill.id);
               return (
-                <div key={skill.id} className="flex items-start justify-between gap-2 rounded-lg border border-[#e1ece9] bg-[#f8fbfa] px-2.5 py-2">
+                <div key={skill.id} className="flex items-start justify-between gap-2 rounded-lg border border-[#e0e2ea] bg-[#f9f9fc] px-2.5 py-2">
                   <input type="checkbox" className="mt-1 shrink-0 accent-primary" checked={enabled}
                     aria-label={'启用 ' + skill.name} disabled={importing}
                     onChange={(event) => onChange({

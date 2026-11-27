@@ -41,11 +41,11 @@ export function NodeSearch({ tree, onSelect }: { tree: MindMapNode; onSelect: (i
         const next = (position + 1) % matches.length;
         setPosition(next);
         onSelect(matches[next]);
-      }} className="absolute right-0 z-40 mt-2 flex w-64 items-center gap-1 rounded-lg border border-[#dce8e7] bg-white p-2 shadow-lg">
+      }} className="absolute right-0 z-40 mt-2 flex w-64 items-center gap-1 rounded-lg border border-[#e0e2ea] bg-white p-2 shadow-lg">
         <Input ref={input} type="search" aria-label="节点关键字" placeholder="搜索脑图文字" className="h-8 min-w-0"
           value={query} onChange={(event) => { setQuery(event.target.value); setPosition(-1); }} />
         <button type="submit" title="定位下一处" aria-label="定位下一处" disabled={!matches.length}
-          className="h-8 rounded px-1.5 text-xs text-[#145e59] hover:bg-muted disabled:opacity-40">
+          className="h-8 rounded px-1.5 text-xs text-[#534ca6] hover:bg-muted disabled:opacity-40">
           {Math.min(position + 1, matches.length)}/{matches.length}
         </button>
         <button type="button" title="关闭搜索" aria-label="关闭搜索" onClick={close}

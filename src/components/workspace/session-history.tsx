@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Check, GripVertical, History, PanelLeftClose, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Ellipsis, GripVertical, History, PanelLeftClose, Pencil, Trash2, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import type { WorkspaceSummary } from '@/lib/workspaces/types';
 
@@ -33,13 +33,13 @@ function HistoryRow({
   const { setNodeRef, setActivatorNodeRef, transform, transition, isDragging, attributes, listeners }
     = useSortable({ id: item.id, disabled: editing || busy });
   return (
-    <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition: transition }}
+    <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}
       data-session-id={item.id}
-      className={'flex min-w-0 items-center gap-1 rounded-lg border p-1 ' +
-        (selected ? 'border-[#b8d9d2] bg-[#eef7f4]' : 'border-transparent hover:bg-muted') +
-        (isDragging ? ' relative z-10 bg-white shadow-sm' : '')}>
+      className={'group/history relative min-w-0 rounded-md ' +
+        (selected ? 'bg-[#eeedfb] text-[#454080] before:absolute before:left-0 before:top-3 before:h-4 before:w-[3px] before:rounded-full before:bg-[#5752a3]'
+          : 'text-[#41465a] hover:bg-[#f6f6f9]') + (isDragging ? ' z-10 shadow-md' : '')}>
       {confirmDelete ? (
-        <div className="min-w-0 flex-1 space-y-1.5 px-1 py-1" onKeyDown={(event) => {
+        <div className="min-w-0 space-y-2 px-3 py-2" onKeyDown={(event) => {
           if (event.key === 'Escape' && !busy) cancelDelete();
         }}>
           <p className="text-xs text-red-700">删除会话和脑图？</p>
@@ -53,33 +53,42 @@ function HistoryRow({
         </div>
       ) : draft === undefined ? (
         <>
-          <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners}
-            aria-label={'排序 ' + item.title} title="拖动排序" disabled={editing || busy}
-            className="grid h-7 w-6 shrink-0 touch-none cursor-grab place-items-center rounded text-slate-500 hover:bg-white active:cursor-grabbing disabled:opacity-40">
-            <GripVertical aria-hidden="true" className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={select} disabled={disabled} aria-current={selected ? 'true' : undefined}
-            title={item.title} className="min-w-0 flex-1 rounded text-left">
-            <span className="block truncate text-sm font-medium">{item.title}</span>
-          </button>
-          <button type="button" aria-label={'重命名 ' + item.title} title="重命名" disabled={busy} onClick={startEditing}
-            className="grid h-7 w-7 shrink-0 place-items-center rounded text-slate-600 hover:bg-white disabled:opacity-40">
-            <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
-          </button>
-          <button type="button" aria-label={'删除 ' + item.title} title="删除会话"
-            disabled={busy || (selected && disabled)} onClick={askDelete}
-            className="grid h-7 w-6 shrink-0 place-items-center rounded text-slate-500 hover:bg-white hover:text-red-700 disabled:opacity-40">
-            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex min-h-10 items-center gap-0.5 ps-1.5 pe-8 pointer-coarse:pe-12">
+            <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners}
+              aria-label={'排序 ' + item.title} title="拖动排序" disabled={editing || busy}
+              className="grid size-6 shrink-0 touch-none cursor-grab place-items-center rounded text-[#8c90a1] hover:text-[#5752a3] focus-visible:outline-[#5752a3] active:cursor-grabbing disabled:opacity-40">
+              <GripVertical aria-hidden="true" className="size-3.5" />
+            </button>
+            <button type="button" onClick={select} disabled={disabled} aria-current={selected ? 'true' : undefined}
+              title={item.title} className="group/title min-w-0 flex-1 rounded py-2 text-start text-[13px] leading-5 focus-visible:outline-[#5752a3] aria-[current=true]:font-semibold">
+              <span className="block truncate group-focus-visible/title:whitespace-normal group-has-[details[open]]/history:whitespace-normal wrap-anywhere">{item.title}</span>
+            </button>
+          </div>
+          <details name="workspace-history-actions" className="group/actions">
+            <summary aria-label={'更多操作 ' + item.title} title="更多操作"
+              className="absolute end-1 top-1.5 grid size-7 cursor-pointer list-none place-items-center rounded text-[#697084] hover:bg-white hover:text-[#5752a3] focus-visible:outline-[#5752a3] group-open/actions:bg-white pointer-coarse:top-0 [&::-webkit-details-marker]:hidden">
+              <Ellipsis aria-hidden="true" className="size-4" />
+            </summary>
+            <div className="flex flex-wrap gap-1 px-2 pb-2 pt-0.5 text-xs">
+              <button type="button" aria-label={'重命名 ' + item.title} disabled={busy} onClick={startEditing}
+                className="inline-flex min-h-7 items-center gap-1.5 rounded px-2 text-[#454080] hover:bg-white focus-visible:outline-[#5752a3] disabled:opacity-40">
+                <Pencil aria-hidden="true" className="size-3.5" />重命名
+              </button>
+              <button type="button" aria-label={'删除 ' + item.title} disabled={busy || (selected && disabled)} onClick={askDelete}
+                className="inline-flex min-h-7 items-center gap-1.5 rounded px-2 text-[#697084] hover:bg-white hover:text-red-700 focus-visible:outline-[#5752a3] disabled:opacity-40">
+                <Trash2 aria-hidden="true" className="size-3.5" />删除
+              </button>
+            </div>
+          </details>
         </>
       ) : (
-        <form className="flex min-w-0 flex-1 items-center gap-1" onSubmit={saveTitle} onKeyDown={(event) => {
+        <form className="flex min-w-0 items-center gap-1 p-1.5" onSubmit={saveTitle} onKeyDown={(event) => {
           if (event.key === 'Escape' && !busy) stopEditing();
         }}>
           <Input autoFocus value={draft} maxLength={120} aria-label="会话名称" disabled={busy}
             className="h-8 min-w-0 flex-1 px-2" onChange={(event) => setDraft(event.target.value)} />
           <button type="submit" aria-label="保存名称" title="保存名称" disabled={busy || !draft.trim()}
-            className="grid h-7 w-7 shrink-0 place-items-center rounded text-primary hover:bg-white disabled:opacity-40">
+            className="grid h-7 w-7 shrink-0 place-items-center rounded text-[#5752a3] hover:bg-white disabled:opacity-40">
             <Check aria-hidden="true" className="h-4 w-4" />
           </button>
           <button type="button" aria-label="取消重命名" title="取消重命名" disabled={busy} onClick={stopEditing}
@@ -157,20 +166,20 @@ export function SessionHistory({ items, selected, disabled, select, rename, reor
   }
 
   return (
-    <aside aria-label="历史对话" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#d6e6e2] bg-white">
-      <header className="flex items-center justify-between gap-2 border-b border-[#e1ebe8] bg-[#f3f8f6] px-3 py-2.5">
-        <h2 className="flex min-w-0 items-center gap-2 truncate text-sm font-semibold text-[#183637]">
-          <History aria-hidden="true" className="h-4 w-4 shrink-0" />历史对话
+    <aside aria-label="历史对话" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white">
+      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-[#e0e2ea] px-3">
+        <h2 className="flex min-w-0 items-center gap-2 whitespace-nowrap text-sm font-semibold text-[#25283d]">
+          <History aria-hidden="true" className="h-4 w-4 shrink-0 text-[#697084]" />历史对话
         </h2>
         {collapse && <button id="collapse-history" type="button" aria-label="折叠历史对话" title="折叠历史对话" onClick={collapse}
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-white text-slate-600 hover:bg-muted">
+          className="grid size-7 shrink-0 place-items-center rounded-md text-[#697084] hover:bg-[#eeedfb] hover:text-[#5752a3] focus-visible:outline-[#5752a3]">
           <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
         </button>}
       </header>
       <DndContext id="workspace-history-sort" sensors={sensors} collisionDetection={closestCenter}
         onDragEnd={(event) => { void sort(event); }}>
         <SortableContext items={items.map(({ id }) => id)} strategy={verticalListSortingStrategy}>
-          <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+          <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
             {items.map((item) => (
               <HistoryRow key={item.id} item={item} selected={item.id === selected} disabled={disabled} editing={!!editing || !!deleting}
                 busy={busy} draft={item.id === editing?.id ? editing.title : undefined}

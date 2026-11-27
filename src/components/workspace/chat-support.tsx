@@ -1,10 +1,10 @@
 'use client';
 
-import { ArrowUpRight, ChevronRight, Sparkles } from 'lucide-react';
+import { ArrowUpLeft, ChevronRight } from 'lucide-react';
 import type { FollowUp } from '@/lib/agent/follow-ups';
 import type { MindMapNode } from '@/lib/agent/types';
 
-const examples = [
+export const requirementExamples = [
   { label: '团队邀请', text: '团队支持邮箱邀请。邀请链接 24 小时后过期。撤销后立即失效，同一邀请只能接受一次。登录邮箱与被邀请邮箱不一致时拒绝加入。' },
   { label: '商品搜索', text: '商品搜索忽略关键字大小写，去除首尾空格。空关键字展示最近浏览。每页最多 20 项，无匹配时显示空结果。' },
   { label: '退款审批', text: '付款后 7 天内可申请退款，累计退款不能超过实付金额。审核通过后的状态为待到账，收到渠道成功回调后才记为已退款。' },
@@ -60,36 +60,35 @@ export function ChatSuggestions({ tree, selection, blank, followUps, choose }: {
   followUps?: FollowUp[];
   choose: (text: string) => void;
 }) {
-  function buttons(items: typeof examples) {
-    return (
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {items.map(({ label, text }) => (
-          <button type="button" key={label} title={label} onClick={() => choose(text)}
-            className="flex max-w-full min-w-0 items-center gap-1 rounded-md border border-[#dce8e7] bg-white px-2.5 py-1.5 text-[11px] text-[#315557] hover:border-[#9dc9c3] hover:bg-[#edf7f5] focus-visible:outline-2 focus-visible:outline-offset-1">
-            <span className="min-w-0 truncate">{label}</span><ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          </button>
-        ))}
-      </div>
-    );
-  }
   if (blank) {
     return (
-      <details className="group pb-2">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-[#456469]">
-          <ChevronRight className="h-3.5 w-3.5 group-open:rotate-90" aria-hidden="true" /> 需求示例
+      <details className="group mb-2">
+        <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded text-xs font-medium text-[#697084] hover:text-[#5752a3] focus-visible:outline-[#5752a3] [&::-webkit-details-marker]:hidden">
+          需求示例 <ChevronRight className="size-3.5 group-open:rotate-90" aria-hidden="true" />
         </summary>
-        {buttons(examples)}
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {requirementExamples.map(({ label, text }) => (
+            <button type="button" key={label} onClick={() => choose(text)}
+              className="rounded-md bg-[#f3f3f8] px-2.5 py-1.5 text-xs text-[#4d5068] hover:bg-[#eeedfb] hover:text-[#454080] focus-visible:outline-[#5752a3]">{label}</button>
+          ))}
+        </div>
       </details>
     );
   }
   const suggestions = showSuggestedPrompts(tree, selection, followUps);
   if (!suggestions.length) return null;
   return (
-    <div className="pb-2">
-      <div className="flex items-center gap-1.5 text-xs font-medium text-[#456469]">
-        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> 猜你想问
+    <section aria-label="猜你想问" className="mb-2.5">
+      <h3 className="mb-1 text-xs font-medium text-[#697084]">猜你想问</h3>
+      <div className="grid gap-0.5">
+        {suggestions.map(({ label, text }) => (
+          <button type="button" key={label} title={label} onClick={() => choose(text)}
+            className="group flex min-w-0 items-start gap-1.5 rounded py-0.5 text-start text-xs leading-5 text-[#514c91] hover:underline focus-visible:outline-[#5752a3]">
+            <ArrowUpLeft className="mt-1 size-3 shrink-0" aria-hidden="true" />
+            <span className="line-clamp-2 min-w-0 wrap-anywhere group-focus-visible:line-clamp-none group-hover:line-clamp-none">{label}</span>
+          </button>
+        ))}
       </div>
-      {buttons(suggestions)}
-    </div>
+    </section>
   );
 }

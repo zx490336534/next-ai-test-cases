@@ -70,6 +70,7 @@ type MindMapTagItem = string | { text?: string; value?: string; name?: string };
 
 type MindMapNodeLike = {
   isRoot?: boolean;
+  children?: MindMapNodeLike[];
   nodeData?: {
     data?: RawMindMapData;
   };
@@ -96,7 +97,6 @@ type MindMapInstance = {
     setScale?: (scale: number, x?: number, y?: number) => void;
     translateXY?: (x: number, y: number) => void;
     fit?: () => void;
-    reset?: () => void;
   };
   resize?: () => void;
   updateData?: (data: MindMapNode) => void;
@@ -202,6 +202,19 @@ function extractRootData(rawData: unknown) {
   return rawData;
 }
 
+function firstVisibleCase(root: MindMapNodeLike) {
+  for (const moduleNode of root.children ?? []) {
+    for (const precondition of moduleNode.children ?? []) {
+      for (const test of precondition.children ?? []) {
+        const group = test.group?.node ?? test.group?.el;
+        const step = test.children?.[0]?.group;
+        const bounds = group?.getBoundingClientRect();
+        if (bounds?.width && step) return { bounds, step: (step.node ?? step.el)?.getBoundingClientRect() };
+      }
+    }
+  }
+}
+
 export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMapView(
   { data, onChange, onScaleChange, onSelectionChange, onNodeClick, readOnly = false, compact = false },
   ref,
@@ -215,17 +228,14 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onNodeClickRef = useRef(onNodeClick);
   const selectionRef = useRef<MindMapNodeLike[]>([]);
-  const resizeObserverRef = useRef<ResizeObserver | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fitTimerRefs = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastSyncedJsonRef = useRef('');
   const showingCasesRef = useRef(false);
-  const mountedRef = useRef(false);
   const programmaticUpdateRef = useRef(false);
-  const fitPendingAfterRenderRef = useRef(false);
+  const pendingView = useRef<'reading' | 'overview' | null>('reading');
   const [selection, setSelection] = useState<{ root: boolean; count: number } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [priorityEditor, setPriorityEditor] = useState<PriorityEditorState | null>(null);
+  const [focusedTool, setFocusedTool] = useState('rename');
 
   const normalizedData = useMemo(() => nodeForEditor(data || EMPTY_MAP), [data]);
   const normalizedDataRef = useRef(normalizedData);
@@ -247,56 +257,45 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     return raw ? normalizeMindMap(normalizeNodeFromMindMap(raw)) : undefined;
   }, []);
 
-  const scheduleFit = useCallback((resetView = false) => {
-    fitTimerRefs.current.forEach((timer) => clearTimeout(timer));
-    fitTimerRefs.current = [];
-
-    let didReset = false;
-    const fit = () => {
-      if (!mountedRef.current) return;
-      const instance = instanceRef.current;
-      if (!instance) return;
-
-      try {
-        instance.resize?.();
-        if (resetView && !didReset) {
-          instance.view?.reset?.();
-          didReset = true;
-        }
-        const view = instance.view;
-        view?.fit?.();
-        if (compact && view?.scale && view.scale < 0.85) {
-          const root = instance.renderer?.root?.group;
-          const node = (root?.node ?? root?.el)?.getBoundingClientRect();
-          const canvas = containerRef.current?.getBoundingClientRect();
-          if (node && canvas && node.width > 0) {
-            const x = node.left - canvas.left + node.width / 2;
-            const y = node.top - canvas.top + node.height / 2;
-            const left = Math.min(canvas.width / 2, 16 + node.width * 0.85 / view.scale / 2);
-            view.setScale?.(0.85, x, y);
-            view.translateXY?.(left - x, canvas.height / 2 - y);
-          }
-        }
-        if (typeof view?.scale === 'number') {
-          onScaleChangeRef.current?.(Math.round(view.scale * 100));
-        }
-      } catch {
-        // fit is best-effort only; rendering should not fail because of it.
+  const frameCanvas = useCallback((mode: 'reading' | 'overview') => {
+    const instance = instanceRef.current;
+    const view = instance?.view;
+    const root = instance?.renderer?.root;
+    const canvas = containerRef.current?.getBoundingClientRect();
+    const rootElement = root?.group?.node ?? root?.group?.el;
+    if (!view || !canvas?.width || !canvas.height || !rootElement?.getBoundingClientRect().width) return;
+    pendingView.current = null;
+    view.fit?.();
+    // Keep small trees in full view. Open larger trees at a scale suitable for reading.
+    const shallow = root?.children?.every((moduleNode) => !moduleNode.children?.length);
+    if (mode === 'reading' && view.scale && view.scale < (shallow ? 0.75 : 0.9)) {
+      view.setScale?.(1);
+      const firstCase = canvas.width < 560 && root ? firstVisibleCase(root) : undefined;
+      if (firstCase) {
+        const { bounds, step } = firstCase;
+        const firstRow = step && bounds.bottom - step.top < canvas.height * 0.65 ? Math.min(bounds.top, step.top) : bounds.top;
+        view.translateXY?.(canvas.left + 14 - bounds.left, canvas.top + canvas.height * 0.24 - firstRow);
+        return;
       }
-    };
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        fit();
+      const bounds = rootElement.getBoundingClientRect();
+      const rootY = bounds.top + bounds.height / 2;
+      const modules = (root?.children ?? []).flatMap(({ group }) => {
+        const rect = (group?.node ?? group?.el)?.getBoundingClientRect();
+        return rect?.width ? [{ left: rect.left, y: rect.top + rect.height / 2 }] : [];
       });
-    });
+      const first = modules[0] ?? { left: bounds.left, y: rootY };
+      const nearest = modules.reduce((best, item) =>
+        Math.abs(item.y - rootY) < Math.abs(best.y - rootY) ? item : best, first);
+      const showRoot = Math.abs(nearest.y - rootY) < canvas.height - 80;
+      // A very tall tree can put every module outside the root's viewport. Open the first module there.
+      const anchorY = showRoot ? (rootY + nearest.y) / 2 : first.y;
+      const anchorLeft = showRoot ? bounds.left : first.left;
+      const left = canvas.width < 480 ? 16 : 32;
+      view.translateXY?.(canvas.left + left - anchorLeft, canvas.top + canvas.height / 2 - anchorY);
+    }
+  }, []);
 
-    fitTimerRefs.current = [
-      setTimeout(fit, 120),
-      setTimeout(fit, 320),
-      setTimeout(fit, 640),
-    ];
-  }, [compact]);
+  const cancelPendingView = () => { pendingView.current = null; };
 
   const syncScale = useCallback(() => {
     const scale = instanceRef.current?.view?.scale;
@@ -319,17 +318,15 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     programmaticUpdateRef.current = true;
     try {
       if (resetView) {
-        fitPendingAfterRenderRef.current = true;
+        pendingView.current = 'reading';
       }
       if (nextJson !== lastSyncedJsonRef.current) instanceRef.current.updateData?.(mindMapData);
+      else if (resetView) frameCanvas('reading');
       lastSyncedJsonRef.current = nextJson;
-      if (resetView) {
-        scheduleFit(true);
-      }
     } finally {
       programmaticUpdateRef.current = false;
     }
-  }, [scheduleFit]);
+  }, [frameCanvas]);
 
   const changePriority = useCallback((priority: Priority) => {
     if (!priorityEditor || readOnlyRef.current) return;
@@ -352,29 +349,31 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
       zoomIn: () => {
         const view = instanceRef.current?.view;
         if (!view) return;
+        cancelPendingView();
         view.setScale?.(Math.min((view.scale || 1) + 0.1, 3));
         syncScale();
       },
       zoomOut: () => {
         const view = instanceRef.current?.view;
         if (!view) return;
+        cancelPendingView();
         view.setScale?.(Math.max((view.scale || 1) - 0.1, 0.1));
         syncScale();
       },
       fit: () => {
-        instanceRef.current?.view?.fit?.();
-        syncScale();
+        pendingView.current = 'overview';
+        frameCanvas('overview');
       },
       resetLayout: () => {
+        pendingView.current = 'overview';
         instanceRef.current?.execCommand?.('RESET_LAYOUT');
-        scheduleFit();
       },
       expandAll: () => {
         instanceRef.current?.execCommand?.('EXPAND_ALL');
       },
       collapseAll: () => {
+        pendingView.current = 'overview';
         instanceRef.current?.execCommand?.('UNEXPAND_ALL', false);
-        scheduleFit();
       },
       read,
       isEditing: () => instanceRef.current?.renderer?.textEdit?.isShowTextEdit() ?? false,
@@ -392,23 +391,20 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         applyData(currentDataRef.current, true);
       },
     }),
-    [applyData, read, scheduleFit, syncScale],
+    [applyData, frameCanvas, read, syncScale],
   );
 
   useEffect(() => {
-    mountedRef.current = true;
+    const container = containerRef.current;
+    if (!container) return;
+    let disposed = false;
+    let loading = false;
 
-    async function initMindMap(retryCount = 0) {
-      if (!containerRef.current || instanceRef.current || !mountedRef.current) {
-        return;
-      }
-
-      const rect = containerRef.current.getBoundingClientRect();
-      if ((rect.width <= 0 || rect.height <= 0) && retryCount < 12) {
-        retryTimerRef.current = setTimeout(() => void initMindMap(retryCount + 1), 100);
-        return;
-      }
-
+    async function initMindMap() {
+      if (!container || instanceRef.current || loading || disposed) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      loading = true;
       try {
         setRenderError(null);
         await import('simple-mind-map/dist/simpleMindMap.esm.css');
@@ -422,32 +418,35 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
           throw new Error('simple-mind-map 加载失败');
         }
 
-        if (!mountedRef.current || !containerRef.current) return;
+        if (disposed || !container.getBoundingClientRect().width || !container.getBoundingClientRect().height) return;
 
-        containerRef.current.innerHTML = '';
+        container.replaceChildren();
         const initialData = normalizedDataRef.current;
-        fitPendingAfterRenderRef.current = true;
+        pendingView.current = 'reading';
         instanceRef.current = new MindMap({
-          el: containerRef.current,
+          el: container,
           data: initialData,
           readonly: readOnlyRef.current,
           theme: 'default',
           themeConfig: {
-            backgroundColor: 'transparent', lineColor: '#7ca5a1',
-            root: { fillColor: '#156f68', color: '#ffffff' },
-            second: { fillColor: '#f2f9f8', color: '#193637' },
+            backgroundColor: 'transparent', lineColor: '#aaaac7',
+            root: { fillColor: '#4540a0', color: '#ffffff', fontSize: 18, borderRadius: 8 },
+            second: { fillColor: '#efedfc', color: '#25283d', borderColor: '#d4d0eb', marginX: 30, marginY: 24, borderRadius: 6 },
+            node: { color: '#25283d', marginX: 21, paddingX: 9 },
           },
           defaultInsertSecondLevelNodeText: '新模块',
           defaultInsertBelowSecondLevelNodeText: '新节点',
           layout: 'logicalStructure',
           resetScaleOnMoveNodeToCenter: false,
-          fit: true,
+          fit: false,
+          fitPadding: 20,
+          hoverRectColor: '#7166c0',
           nodeTextEditZIndex: 1000,
           tagsColorMap: TAG_COLORS,
           maxHistoryCount: 100,
           addHistoryTime: 200,
           mousewheelAction: 'zoom',
-          ...(compact && { textAutoWrapWidth: 220 }),
+          textAutoWrapWidth: rect.width < 560 ? Math.max(108, Math.min(180, (rect.width - 120) / 2)) : 300,
           mousewheelZoomActionReverse: false,
           enableCtrlKeyNodeSelection: true,
           enableAutoEnterTextEditWhenKeydown: true,
@@ -491,9 +490,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         };
 
         const handleNodeTreeRenderEnd = () => {
-          if (!fitPendingAfterRenderRef.current) return;
-          fitPendingAfterRenderRef.current = false;
-          scheduleFit(true);
+          if (pendingView.current) frameCanvas(pendingView.current);
         };
 
         const handleNodeTagClick = (node: MindMapNodeLike, item: MindMapTagItem) => {
@@ -539,57 +536,27 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current.__handlers = { handleDataChange, handleScale, handleNodeTreeRenderEnd, handleNodeTagClick, handleSelection, handleNodeClick };
 
         syncScale();
-        scheduleFit(true);
       } catch (error) {
         const message = error instanceof Error ? error.message : '脑图渲染失败';
-        setRenderError(message);
+        if (!disposed) setRenderError(message);
+      } finally {
+        loading = false;
       }
     }
 
     void initMindMap();
 
-    return () => {
-      mountedRef.current = false;
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
-  }, [compact, read, scheduleFit, syncScale]);
-
-  useEffect(() => {
-    if (!instanceRef.current) return;
-    const nextJson = JSON.stringify(nodeForEditor(data || EMPTY_MAP));
-    if (nextJson === lastSyncedJsonRef.current) return;
-    applyData(data || EMPTY_MAP);
-  }, [applyData, data]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || typeof ResizeObserver === 'undefined') return;
-
-    resizeObserverRef.current = new ResizeObserver(() => {
+    const observer = new ResizeObserver(() => {
       const rect = container.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-
-      try {
-        instanceRef.current?.resize?.();
-      } catch {
-        // simple-mind-map throws when layout is between hidden and visible states.
-      }
+      if (!rect.width || !rect.height) return;
+      if (instanceRef.current) instanceRef.current.resize?.();
+      else void initMindMap();
     });
-    resizeObserverRef.current.observe(container);
+    observer.observe(container);
 
     return () => {
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const container = containerRef.current;
-
-    return () => {
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      fitTimerRefs.current.forEach((timer) => clearTimeout(timer));
-      fitTimerRefs.current = [];
+      disposed = true;
+      observer.disconnect();
       if (instanceRef.current) {
         const handlers = instanceRef.current.__handlers;
         if (handlers) {
@@ -603,17 +570,17 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         instanceRef.current.destroy?.();
         instanceRef.current = null;
       }
-      if (container) {
-        container.innerHTML = '';
-      }
+      container.replaceChildren();
     };
-  }, []);
+  }, [frameCanvas, read, syncScale]);
+
+  useEffect(() => {
+    if (!instanceRef.current) return;
+    const nextJson = JSON.stringify(nodeForEditor(data || EMPTY_MAP));
+    if (nextJson !== lastSyncedJsonRef.current) applyData(data || EMPTY_MAP);
+  }, [applyData, data]);
 
   function trackGesture(event: TouchEvent<HTMLDivElement>) {
-    if (event.type === 'touchstart') {
-      fitTimerRefs.current.forEach(clearTimeout);
-      fitTimerRefs.current = [];
-    }
     const [first, second] = Array.from(event.touches);
     const view = instanceRef.current?.view;
     if (!view || !first || event.touches.length > 2 || event.type === 'touchcancel') {
@@ -664,21 +631,25 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
     { command: 'down', label: '下移节点', icon: ArrowDown, single: true, root: false },
     { command: 'delete', label: '删除节点', icon: Trash2, single: false, root: false },
   ] as const;
+  const tools = selection ? nodeTools.filter((item) => (item.root || !selection.root) && (!item.single || selection.count === 1)) : [];
+  const tabStop = tools.find(({ command }) => command === focusedTool) ?? tools[0];
+  const nativeToolbar = typeof HTMLElement !== 'undefined' && 'focusGroup' in HTMLElement.prototype;
 
   return (
-    <div className="mindmap-grid relative h-full w-full overflow-hidden rounded-xl border border-[#dce8e7] bg-[#f7faf9]">
+    <div className="mindmap-grid @container/map relative h-full w-full overflow-hidden">
       {renderError ? <p className="absolute left-3 top-3 z-10 text-xs text-red-600">{renderError}</p> : null}
       {priorityEditor && !readOnly ? (
-        <div
-          className="absolute z-20 flex items-center gap-1 rounded-lg border bg-white p-1 shadow-lg"
+        <div role="group" aria-label="修改优先级"
+          className="absolute z-20 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center gap-1 rounded-lg border border-[#dcdbe7] bg-white p-1 shadow-sm"
           style={{ left: priorityEditor.x, top: priorityEditor.y }}
         >
           {(['P0', 'P1', 'P2', 'P3'] as const).map((priority) => (
             <button
               key={priority}
               type="button"
-              className={`flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium ${
-                priorityEditor.currentPriority === priority ? 'bg-slate-100 text-slate-950' : 'text-slate-600 hover:bg-slate-50'
+              aria-pressed={priorityEditor.currentPriority === priority}
+              className={`flex min-h-8 items-center justify-center gap-1 rounded-md px-2 text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${
+                priorityEditor.currentPriority === priority ? 'bg-[#efedfc] text-[#4540a0]' : 'text-[#48495e] hover:bg-[#f6f5fa]'
               }`}
               onClick={() => changePriority(priority)}
               title={`修改为 ${priority}`}
@@ -690,6 +661,7 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         </div>
       ) : null}
       <div ref={containerRef} className="h-full w-full touch-none" aria-label="测试用例脑图画布"
+        onPointerDownCapture={cancelPendingView} onWheelCapture={cancelPendingView}
         onTouchStart={trackGesture} onTouchMove={trackGesture} onTouchEnd={trackGesture} onTouchCancel={trackGesture} />
       {compact && !selection && (
         <p className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white/90 px-2 py-1 text-xs text-slate-600 [@media(pointer:fine)]:hidden">
@@ -697,13 +669,23 @@ export const MindMapView = forwardRef<MindMapViewHandle, Props>(function MindMap
         </p>
       )}
       {selection && !readOnly ? (
-        <div role="toolbar" aria-label="节点操作" onMouseDown={(event) => event.preventDefault()}
-          className="absolute bottom-2 left-2 z-10 flex max-w-[calc(100%-1rem)] lg:bottom-4 lg:left-4 flex-wrap gap-0.5 rounded-xl border border-[#dce8e7] bg-white p-1.5 shadow-lg shadow-[#173938]/8">
-          {nodeTools.filter((item) => (item.root || !selection.root) && (!item.single || selection.count === 1)).map(({ command, icon: Icon, label }) => (
+        <div role="toolbar" aria-label="节点操作" {...{ focusgroup: 'toolbar wrap' }} onMouseDown={(event) => event.preventDefault()}
+          onKeyDown={(event) => {
+            if (nativeToolbar || !(event.target instanceof HTMLButtonElement)) return;
+            const buttons = Array.from(event.currentTarget.querySelectorAll('button'));
+            const index = buttons.indexOf(event.target);
+            const offsets: Record<string, number> = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: buttons.length - 1 };
+            if (!Object.hasOwn(offsets, event.key)) return;
+            event.preventDefault();
+            buttons[(offsets[event.key] + buttons.length) % buttons.length]?.focus();
+          }}
+          className="absolute bottom-2 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-0.5 rounded-lg border border-[#dcdbe7] bg-white p-1 shadow-sm">
+          {tools.map(({ command, icon: Icon, label }) => (
             <button type="button" key={command} aria-label={label} title={label}
-              className="flex h-8 items-center gap-1 rounded-md px-2 text-xs text-slate-700 hover:bg-[#eaf4f2] focus-visible:outline-2 focus-visible:outline-offset-1"
+              tabIndex={nativeToolbar ? undefined : command === tabStop?.command ? 0 : -1} onFocus={() => setFocusedTool(command)}
+              className="flex min-h-8 min-w-8 items-center justify-center gap-1 rounded-md px-1.5 text-xs text-[#393951] hover:bg-[#efedfc] focus-visible:outline-2 focus-visible:outline-[#615ab0] pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               onClick={() => edit(command)}>
-              <Icon className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">{label}</span>
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden @[34rem]/map:inline">{label}</span>
             </button>
           ))}
         </div>
